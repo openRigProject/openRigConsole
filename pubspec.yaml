@@ -1,0 +1,20 @@
+name: openrig_console
+description: openRig Console — desktop CAT control, QSO logging, and DX Cluster.
+version: 0.1.0
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+  flutter: '>=3.19.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  openrig_core:
+    path: ../openrig_core
+
+flutter:
+  uses-material-design: true
+  # Platform-specific rigctld binaries bundled for local rig control.
+  # Populated when hamlib release binaries are downloaded.
+  assets:
+    - assets/rigctld/

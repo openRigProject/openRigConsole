@@ -1,0 +1,12 @@
+# Dart/Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+pubspec.lock
+build/
+
+# rigctld platform binaries — add your own from hamlib releases
+assets/rigctld/linux/
+assets/rigctld/macos/
+assets/rigctld/windows/
