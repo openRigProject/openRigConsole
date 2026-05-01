@@ -1,17 +1,32 @@
-# openrig_console
+# openRigConsole
 
-A new Flutter project.
+Desktop ham radio application for macOS, Linux, and Windows. Provides rig control, QSO logging, DX cluster spots, and bandmap in a single window.
 
-## Getting Started
+> **PRE-RELEASE SOFTWARE — EXPERIMENTAL USE ONLY**
+>
+> This project is pre-release software. It has not been tested for security, reliability, or fitness for any particular purpose. Use it only for experimentation and personal learning. It is **not** suitable for production or safety-critical use.
+>
+> By using this software you agree that the author(s) shall not be held liable for any damages, data loss, security incidents, regulatory violations, or any other harm arising from its use.
 
-This project is a starting point for a Flutter application.
+## Requirements
 
-A few resources to get you started if this is your first Flutter project:
+- [Flutter](https://flutter.dev) SDK
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+## Building
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```bash
+# macOS
+flutter build macos
+
+# Linux
+flutter build linux
+
+# Windows
+flutter build windows
+```
+
+## Running (development)
+
+```bash
+flutter run -d macos
+```
