@@ -11,10 +11,26 @@ dependencies:
     sdk: flutter
   openrig_core:
     path: ../openrig_core
+  file_picker: ^8.0.0
+  path_provider: ^2.1.0
+  shared_preferences: ^2.2.0
+  url_launcher: ^6.2.0
+  flutter_map: ^7.0.0
+  latlong2: ^0.9.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  integration_test:
+    sdk: flutter
+  test: ^1.24.0
 
 flutter:
   uses-material-design: true
   # Platform-specific rigctld binaries bundled for local rig control.
   # Populated when hamlib release binaries are downloaded.
   assets:
-    - assets/rigctld/
+    - assets/rigctld/macos/
+    - assets/rigctld/linux/
+    - assets/rigctld/windows/
