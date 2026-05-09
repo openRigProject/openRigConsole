@@ -375,6 +375,7 @@ class _AppShellState extends State<AppShell>
                   connectionService: _connectionService,
                   settings: _settings,
                   qsoController: _qsoController,
+                  tabController: _tabController,
                 ),
               ],
             ),

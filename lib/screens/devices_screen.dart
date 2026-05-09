@@ -11,12 +11,14 @@ class DevicesScreen extends StatefulWidget {
   final ConnectionService connectionService;
   final SettingsService settings;
   final QsoEntryController? qsoController;
+  final TabController? tabController;
 
   const DevicesScreen({
     super.key,
     required this.connectionService,
     required this.settings,
     this.qsoController,
+    this.tabController,
   });
 
   @override
@@ -220,6 +222,7 @@ class _DevicesScreenState extends State<DevicesScreen>
                   connectionService: _cs,
                   settings: widget.settings,
                   qsoController: widget.qsoController,
+                  tabController: widget.tabController,
                   onAddRig: _selectedDevice!.hasRigctld
                       ? () => _addRig(_selectedDevice!)
                       : null,
@@ -360,6 +363,7 @@ class _DeviceDetailPanel extends StatefulWidget {
   final ConnectionService connectionService;
   final SettingsService settings;
   final QsoEntryController? qsoController;
+  final TabController? tabController;
   final VoidCallback? onAddRig;
 
   const _DeviceDetailPanel({
@@ -368,6 +372,7 @@ class _DeviceDetailPanel extends StatefulWidget {
     required this.connectionService,
     required this.settings,
     this.qsoController,
+    this.tabController,
     this.onAddRig,
   });
 
@@ -525,8 +530,11 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
           _lastHeard.insert(0, entry);
           if (_lastHeard.length > 50) _lastHeard.removeLast();
         });
-        // Auto-load callsign info when a new (not an update) transmission arrives.
-        if (isNewTransmission) {
+        // Auto-load callsign info when a new (not an update) transmission
+        // arrives, but only while the Devices tab is the active tab so we
+        // don't clobber whatever the user is looking at on another tab.
+        if (isNewTransmission &&
+            (widget.tabController == null || widget.tabController!.index == 3)) {
           widget.qsoController?.loadCallsign(entry.callsign);
         }
       },
