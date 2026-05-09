@@ -44,6 +44,9 @@ class QsoEntryController {
 
   /// Populate the QSO entry panel from a DX cluster spot and trigger a QRZ lookup.
   void loadSpot(DxSpot spot) => _state?._loadSpot(spot);
+
+  /// Set the callsign field and trigger a QRZ lookup (without changing freq/mode).
+  void loadCallsign(String callsign) => _state?._loadCallsign(callsign);
 }
 
 // ---------------------------------------------------------------------------
@@ -376,6 +379,14 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
 
     _lookupQrz();
     if (spot.parkRef != null) _lookupPotaPark(spot.parkRef!);
+  }
+
+  void _loadCallsign(String callsign) {
+    setState(() {
+      _callCtl.text = callsign.toUpperCase();
+      _qrzInfo = null;
+    });
+    _lookupQrz();
   }
 
   Future<void> _lookupPotaPark(String ref) async {

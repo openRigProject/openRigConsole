@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:openrig_core/openrig_core.dart' hide ChangeNotifier;
+import '../panels/qso_entry_panel.dart';
 import '../services/connection_service.dart';
 import '../services/settings_service.dart';
 import '../widgets/rig_settings_dialog.dart';
@@ -9,11 +10,13 @@ import '../widgets/rig_settings_dialog.dart';
 class DevicesScreen extends StatefulWidget {
   final ConnectionService connectionService;
   final SettingsService settings;
+  final QsoEntryController? qsoController;
 
   const DevicesScreen({
     super.key,
     required this.connectionService,
     required this.settings,
+    this.qsoController,
   });
 
   @override
@@ -25,11 +28,16 @@ class _DevicesScreenState extends State<DevicesScreen> {
   StreamSubscription<OpenRigDevice>? _foundSub;
   StreamSubscription<String>? _lostSub;
 
+  static const _listWidthMin = 180.0;
+  static const _listWidthMax = 520.0;
+  late double _listWidth;
+
   ConnectionService get _cs => widget.connectionService;
 
   @override
   void initState() {
     super.initState();
+    _listWidth = widget.settings.layoutDevicesListWidth;
     _cs.addListener(_onServiceChanged);
     if (_cs.mdnsAvailable) {
       _foundSub = _cs.discovery.onDeviceFound.listen((_) {
@@ -108,9 +116,9 @@ class _DevicesScreenState extends State<DevicesScreen> {
 
     return Row(
       children: [
-        // Device list — left
-        Expanded(
-          flex: 3,
+        // Device list — left (fixed width, resizable)
+        SizedBox(
+          width: _listWidth,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -167,10 +175,36 @@ class _DevicesScreenState extends State<DevicesScreen> {
             ],
           ),
         ),
-        const VerticalDivider(thickness: 1, width: 1),
+        // Draggable divider
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onHorizontalDragUpdate: (d) {
+            setState(() {
+              _listWidth =
+                  (_listWidth + d.delta.dx).clamp(_listWidthMin, _listWidthMax);
+            });
+            widget.settings.setLayoutDevicesListWidth(_listWidth);
+          },
+          child: MouseRegion(
+            cursor: SystemMouseCursors.resizeLeftRight,
+            child: Container(
+              width: 6,
+              color: Colors.grey.shade800,
+              child: Center(
+                child: Container(
+                  width: 3,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade600,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
         // Detail panel — right
         Expanded(
-          flex: 4,
           child: _selectedDevice == null
               ? Center(
                   child: Text('Select a device to view details',
@@ -181,6 +215,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
                   device: _selectedDevice!,
                   connectionService: _cs,
                   settings: widget.settings,
+                  qsoController: widget.qsoController,
                   onAddRig: _selectedDevice!.hasRigctld
                       ? () => _addRig(_selectedDevice!)
                       : null,
@@ -320,6 +355,7 @@ class _DeviceDetailPanel extends StatefulWidget {
   final OpenRigDevice device;
   final ConnectionService connectionService;
   final SettingsService settings;
+  final QsoEntryController? qsoController;
   final VoidCallback? onAddRig;
 
   const _DeviceDetailPanel({
@@ -327,6 +363,7 @@ class _DeviceDetailPanel extends StatefulWidget {
     required this.device,
     required this.connectionService,
     required this.settings,
+    this.qsoController,
     this.onAddRig,
   });
 
@@ -335,7 +372,6 @@ class _DeviceDetailPanel extends StatefulWidget {
 }
 
 class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
-  OpenRigApiClient? _api;
   OpenRigHotspotClient? _hotspotClient;
   DeviceStatus? _status;
   HotspotConfig? _hotspot;
@@ -381,7 +417,6 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
   @override
   void dispose() {
     _lastHeardSub?.cancel();
-    _api?.dispose();
     _hotspotClient?.dispose();
     _rfFreqCtl.dispose();
     _dmrIdCtl.dispose();
@@ -402,25 +437,24 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
 
     _lastHeardSub?.cancel();
     _lastHeardSub = null;
-    _api?.dispose();
     _hotspotClient?.dispose();
 
-    final api = OpenRigApiClient(host: widget.device.host);
-    _api = api;
+    final client = OpenRigHotspotClient(host: widget.device.host);
+    _hotspotClient = client;
 
     try {
-      final status = await api.getStatus();
+      final status = await client.getStatus();
       NetworkStatus? network;
       try {
-        network = await api.getNetworkStatus();
+        network = await client.getNetworkStatus();
       } catch (_) {}
       List<WifiNetwork>? wifiNetworks;
       try {
-        wifiNetworks = await api.getWifi();
+        wifiNetworks = await client.getWifi();
       } catch (_) {}
       HotspotConfig? hotspot;
       if (status.type == 'hotspot') {
-        hotspot = await api.getHotspot();
+        hotspot = await client.getHotspotConfig();
       }
       if (!mounted) return;
       setState(() {
@@ -448,8 +482,7 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
   }
 
   void _startHotspotLive() {
-    final client = OpenRigHotspotClient(host: widget.device.host);
-    _hotspotClient = client;
+    if (_hotspotClient == null) return;
 
     // Load YSF state and server list.
     _refreshYsfState();
@@ -457,7 +490,7 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
 
     // Start last-heard stream.
     _lastHeard.clear();
-    _lastHeardSub = client.streamLastHeard().listen(
+    _lastHeardSub = _hotspotClient!.streamLastHeard().listen(
       (entry) {
         if (!mounted) return;
         setState(() {
@@ -481,7 +514,10 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
     try {
       final raw = await _hotspotClient!.getHotspot();
       if (mounted) {
-        setState(() => _ysfState = HotspotYsfState.fromJson(raw));
+        setState(() {
+          _ysfState = HotspotYsfState.fromJson(raw);
+          _reflectorCtl.text = _ysfState!.reflector;
+        });
       }
     } catch (_) {}
   }
@@ -561,7 +597,7 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
   }
 
   Future<void> _saveHotspot() async {
-    if (_api == null) return;
+    if (_hotspotClient == null) return;
     setState(() => _saving = true);
     try {
       final config = HotspotConfig(
@@ -583,7 +619,7 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
         ysf2dmr: CrossModeConfig(enabled: _ysf2dmrEnabled),
         dmr2ysf: CrossModeConfig(enabled: _dmr2ysfEnabled),
       );
-      await _api!.updateHotspot(config);
+      await _hotspotClient!.saveHotspotConfig(config);
       if (mounted) {
         setState(() {
           _hotspotDirty = false;
@@ -604,9 +640,9 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
   }
 
   Future<void> _saveWifi() async {
-    if (_api == null || _wifiNetworks == null) return;
+    if (_hotspotClient == null || _wifiNetworks == null) return;
     try {
-      await _api!.updateWifi(_wifiNetworks!);
+      await _hotspotClient!.updateWifi(_wifiNetworks!);
       if (mounted) {
         setState(() => _wifiDirty = false);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -634,10 +670,10 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
           Future<void> scan() async {
-            if (_api == null) return;
+            if (_hotspotClient == null) return;
             setDialogState(() => scanning = true);
             try {
-              final results = await _api!.scanWifi();
+              final results = await _hotspotClient!.scanWifi();
               setDialogState(() {
                 scanned = results;
                 scanning = false;
@@ -748,7 +784,7 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
   }
 
   Future<void> _reboot() async {
-    if (_api == null) return;
+    if (_hotspotClient == null) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -769,7 +805,7 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
     );
     if (confirmed != true || !mounted) return;
     try {
-      await _api!.reboot();
+      await _hotspotClient!.reboot();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Rebooting…')),
@@ -785,9 +821,9 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
   }
 
   Future<void> _restartService(String name) async {
-    if (_api == null) return;
+    if (_hotspotClient == null) return;
     try {
-      await _api!.restartService(name);
+      await _hotspotClient!.restartService(name);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Restarted $name')),
@@ -921,532 +957,601 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
 
     final status = _status!;
     final isHotspot = status.type == 'hotspot';
-    final isRigType =
-        status.type == 'rigctl' || status.type == 'console';
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
+    // Header row shared across both layouts
+    Widget header = Padding(
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              status.callsign.isNotEmpty
+                  ? status.callsign
+                  : status.hostname,
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+          ),
+          _TypeBadge(status.type),
+        ],
+      ),
+    );
+
+    if (!isHotspot) {
+      // Non-hotspot: single scrollable config view, no tabs needed
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          header,
+          const SizedBox(height: 16),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _buildConfigCards(status),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Hotspot: two tabs — Live and Config
+    return DefaultTabController(
+      length: 2,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  status.callsign.isNotEmpty
-                      ? status.callsign
-                      : status.hostname,
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-              ),
-              _TypeBadge(status.type),
+          header,
+          const SizedBox(height: 8),
+          const TabBar(
+            tabs: [
+              Tab(text: 'Live'),
+              Tab(text: 'Config'),
             ],
           ),
-          const SizedBox(height: 16),
-
-          // 1. Status card
-          _SectionCard(
-            title: 'Status',
-            icon: Icons.info_outline,
-            children: [
-              _InfoRow('Type', status.type),
-              _InfoRow('Callsign', status.callsign),
-              _InfoRow('Hostname', status.hostname),
-              _InfoRow('Version', status.version),
-              _InfoRow('Uptime', _formatUptime(status.uptime)),
-              if (status.cpuPercent > 0 || status.memTotalMb > 0 || status.diskTotalGb > 0) ...[
-                const SizedBox(height: 4),
-                _MetricRow('CPU', status.cpuPercent / 100, '${status.cpuPercent.toStringAsFixed(1)}%'),
-                if (status.memTotalMb > 0)
-                  _MetricRow(
-                    'Memory',
-                    status.memUsedMb / status.memTotalMb,
-                    '${status.memUsedMb} / ${status.memTotalMb} MB',
-                  ),
-                if (status.diskTotalGb > 0)
-                  _InfoRow('Disk', '${status.diskUsedGb.toStringAsFixed(1)} / ${status.diskTotalGb.toStringAsFixed(1)} GB'),
-              ],
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          // 2. Network card
-          if (_network != null) ...[
-            _SectionCard(
-              title: 'Network',
-              icon: Icons.wifi,
+          Expanded(
+            child: TabBarView(
               children: [
-                _InfoRow('Mode', _network!.mode),
-                if (_network!.ssid.isNotEmpty) _InfoRow('SSID', _network!.ssid),
-                if (_network!.ip.isNotEmpty) _InfoRow('IP', _network!.ip),
-                if (_network!.networkInterface.isNotEmpty)
-                  _InfoRow('Interface', _network!.networkInterface),
-                if (_network!.mode == 'wifi' && _network!.signalDbm != 0)
-                  _InfoRow('Signal', '${_network!.signalDbm} dBm'),
-                _InfoRow('Connected', _network!.connected ? 'Yes' : 'No'),
-              ],
-            ),
-            const SizedBox(height: 16),
-          ],
-
-          // 3. WiFi config card
-          if (_wifiNetworks != null) ...[
-            _SectionCard(
-              title: 'WiFi Networks',
-              icon: Icons.wifi,
-              trailing: _wifiDirty
-                  ? FilledButton(
-                      onPressed: _saveWifi,
-                      child: const Text('Save'),
-                    )
-                  : null,
-              children: [
-                if (_wifiNetworks!.isEmpty)
-                  Text('No networks configured.',
-                      style: TextStyle(color: Colors.grey.shade500)),
-                ..._wifiNetworks!.map((net) => Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.wifi, size: 16),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(net.ssid,
-                                style: const TextStyle(
-                                    fontSize: 13, fontFamily: 'monospace')),
-                          ),
-                          Text('Priority ${net.priority}',
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey.shade500)),
-                          const SizedBox(width: 8),
-                          IconButton(
-                            onPressed: () => setState(() {
-                              _wifiNetworks!.remove(net);
-                              _wifiDirty = true;
-                            }),
-                            icon: const Icon(Icons.close, size: 14),
-                            visualDensity: VisualDensity.compact,
-                            padding: EdgeInsets.zero,
-                            tooltip: 'Remove network',
-                          ),
-                        ],
-                      ),
-                    )),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  onPressed: _showAddWifiDialog,
-                  icon: const Icon(Icons.add, size: 16),
-                  label: const Text('Add Network'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-          ],
-
-          // 4. Hotspot card (only for hotspot devices)
-          if (isHotspot && _hotspot != null) ...[
-            _SectionCard(
-              title: 'Hotspot Configuration',
-              icon: Icons.cell_tower,
-              trailing: _saving
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child:
-                          CircularProgressIndicator(strokeWidth: 2))
-                  : FilledButton(
-                      onPressed: _hotspotDirty ? _saveHotspot : null,
-                      child: const Text('Save'),
-                    ),
-              children: [
-                // RF Frequency
-                TextField(
-                  controller: _rfFreqCtl,
-                  decoration: const InputDecoration(
-                    labelText: 'RF Frequency (MHz)',
-                    hintText: '438.8000',
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                  ),
-                  style: const TextStyle(fontFamily: 'monospace'),
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  onChanged: (_) => setState(() => _hotspotDirty = true),
-                ),
-                const SizedBox(height: 12),
-                // Mode chips
-                Wrap(
-                  spacing: 8,
-                  children: [
-                    FilterChip(
-                      label: const Text('DMR'),
-                      selected: _dmrEnabled,
-                      onSelected: (v) => setState(() {
-                        _dmrEnabled = v;
-                        if (!v) _dmr2ysfEnabled = false;
-                        _hotspotDirty = true;
-                      }),
-                    ),
-                    FilterChip(
-                      label: const Text('YSF'),
-                      selected: _ysfEnabled,
-                      onSelected: (v) => setState(() {
-                        _ysfEnabled = v;
-                        if (!v) _ysf2dmrEnabled = false;
-                        _hotspotDirty = true;
-                      }),
-                    ),
-                    if (_ysfEnabled)
-                      FilterChip(
-                        label: const Text('YSF\u2192DMR'),
-                        selected: _ysf2dmrEnabled,
-                        onSelected: (v) => setState(() {
-                          _ysf2dmrEnabled = v;
-                          _hotspotDirty = true;
-                        }),
-                      ),
-                    if (_dmrEnabled)
-                      FilterChip(
-                        label: const Text('DMR\u2192YSF'),
-                        selected: _dmr2ysfEnabled,
-                        onSelected: (v) => setState(() {
-                          _dmr2ysfEnabled = v;
-                          _hotspotDirty = true;
-                        }),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-
-                // DMR section
-                if (_dmrEnabled) ...[
-                  Text('DMR',
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey.shade300)),
-                  const SizedBox(height: 8),
-                  Row(
+                // ── Live tab ──────────────────────────────────────────
+                SingleChildScrollView(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        flex: 2,
-                        child: TextField(
-                          controller: _dmrServerCtl,
-                          decoration: const InputDecoration(
-                              labelText: 'BrandMeister Server',
-                              isDense: true,
-                              border: OutlineInputBorder()),
-                          style: const TextStyle(fontSize: 13),
-                          onChanged: (_) =>
-                              setState(() => _hotspotDirty = true),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextField(
-                          controller: _colorcodeCtl,
-                          decoration: const InputDecoration(
-                              labelText: 'Color Code',
-                              isDense: true,
-                              border: OutlineInputBorder()),
-                          style: const TextStyle(fontSize: 13),
-                          keyboardType: TextInputType.number,
-                          onChanged: (_) =>
-                              setState(() => _hotspotDirty = true),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _dmrPasswordCtl,
-                    decoration: const InputDecoration(
-                        labelText: 'Password',
-                        isDense: true,
-                        border: OutlineInputBorder()),
-                    style: const TextStyle(fontSize: 13),
-                    obscureText: true,
-                    onChanged: (_) =>
-                        setState(() => _hotspotDirty = true),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _dmrIdCtl,
-                    decoration: const InputDecoration(
-                        labelText: 'DMR ID',
-                        isDense: true,
-                        border: OutlineInputBorder(),
-                        hintText: '1000000–9999999'),
-                    style: const TextStyle(fontSize: 13),
-                    keyboardType: TextInputType.number,
-                    onChanged: (_) =>
-                        setState(() => _hotspotDirty = true),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Text('Talkgroups',
-                          style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey.shade400)),
-                      const Spacer(),
-                      IconButton(
-                        onPressed: _showAddTalkgroup,
-                        icon: const Icon(Icons.add, size: 18),
-                        tooltip: 'Add talkgroup',
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    ],
-                  ),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 4,
-                    children: _talkgroups.map((tg) {
-                      return Chip(
-                        label: Text(
-                            '${tg.name.isNotEmpty ? tg.name : 'TG'}:${tg.id} (S${tg.slot})',
-                            style: const TextStyle(fontSize: 11)),
-                        deleteIcon: const Icon(Icons.close, size: 14),
-                        onDeleted: () => setState(() {
-                          _talkgroups.remove(tg);
-                          _hotspotDirty = true;
-                        }),
-                        visualDensity: VisualDensity.compact,
-                        materialTapTargetSize:
-                            MaterialTapTargetSize.shrinkWrap,
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-
-                // YSF section
-                if (_ysfEnabled) ...[
-                  Text('YSF',
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey.shade300)),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _ysfReflectorCtl,
-                          decoration: const InputDecoration(
-                              labelText: 'Reflector',
-                              isDense: true,
-                              border: OutlineInputBorder()),
-                          style: const TextStyle(fontSize: 13),
-                          onChanged: (_) =>
-                              setState(() => _hotspotDirty = true),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextField(
-                          controller: _ysfDescCtl,
-                          decoration: const InputDecoration(
-                              labelText: 'Description',
-                              isDense: true,
-                              border: OutlineInputBorder()),
-                          style: const TextStyle(fontSize: 13),
-                          onChanged: (_) =>
-                              setState(() => _hotspotDirty = true),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                ],
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            // YSF Reflector Manager
-            if (_ysfState != null && _ysfState!.enabled) ...[
-              _SectionCard(
-                title: 'YSF Reflector Manager',
-                icon: Icons.cell_tower,
-                trailing: _ysfState == null
-                    ? null
-                    : _YsfLinkBadge(_ysfState!),
-                children: [
-                  if (_ysfState!.reflector.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: Row(
-                        children: [
-                          Text('Linked to ',
-                              style: TextStyle(
-                                  color: Colors.grey.shade400,
-                                  fontSize: 13)),
-                          Text(_ysfState!.reflector,
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13)),
-                        ],
-                      ),
-                    ),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _serversLoading
-                            ? const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 8),
-                                child: LinearProgressIndicator(),
-                              )
-                            : Autocomplete<YsfServer>(
-                                displayStringForOption: (s) => s.label,
-                                optionsBuilder: (text) {
-                                  final q = text.text.toUpperCase();
-                                  if (q.isEmpty) return _ysfServers;
-                                  return _ysfServers.where((s) =>
-                                      s.server.contains(q) ||
-                                      s.label
-                                          .toUpperCase()
-                                          .contains(q));
-                                },
-                                fieldViewBuilder:
-                                    (ctx, ctl, focus, onSubmit) {
-                                  _reflectorCtl.text = ctl.text;
-                                  ctl.addListener(
-                                      () => _reflectorCtl.text = ctl.text);
-                                  return TextField(
-                                    controller: ctl,
-                                    focusNode: focus,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Reflector',
-                                      hintText: 'e.g. US-KCWide',
-                                      isDense: true,
-                                      border: OutlineInputBorder(),
-                                    ),
-                                    style:
-                                        const TextStyle(fontSize: 13),
-                                    onSubmitted: (_) => onSubmit(),
-                                  );
-                                },
-                                onSelected: (s) =>
-                                    _reflectorCtl.text = s.server,
+                      // YSF Reflector Manager
+                      if (_ysfState != null && _ysfState!.enabled) ...[
+                        _SectionCard(
+                          title: 'YSF Reflector Manager',
+                          icon: Icons.cell_tower,
+                          trailing: _YsfLinkBadge(_ysfState!),
+                          children: [
+                            if (_ysfState!.reflector.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 10),
+                                child: Row(
+                                  children: [
+                                    Text('Linked to ',
+                                        style: TextStyle(
+                                            color: Colors.grey.shade400,
+                                            fontSize: 13)),
+                                    Text(_ysfState!.reflector,
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 13)),
+                                  ],
+                                ),
                               ),
-                      ),
-                      const SizedBox(width: 8),
-                      _linking
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2))
-                          : FilledButton(
-                              onPressed: _linkYsf,
-                              child: const Text('Link'),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _serversLoading
+                                      ? const Padding(
+                                          padding: EdgeInsets.symmetric(
+                                              vertical: 8),
+                                          child: LinearProgressIndicator(),
+                                        )
+                                      : Autocomplete<YsfServer>(
+                                          key: ValueKey(
+                                              'ysf:${_ysfState?.reflector ?? ''}'),
+                                          initialValue: TextEditingValue(
+                                              text: _reflectorCtl.text),
+                                          displayStringForOption: (s) =>
+                                              s.label,
+                                          optionsBuilder: (text) {
+                                            final q =
+                                                text.text.toUpperCase();
+                                            if (q.isEmpty) return _ysfServers;
+                                            return _ysfServers.where((s) =>
+                                                s.server.contains(q) ||
+                                                s.label
+                                                    .toUpperCase()
+                                                    .contains(q));
+                                          },
+                                          fieldViewBuilder:
+                                              (ctx, ctl, focus, onSubmit) {
+                                            _reflectorCtl.text = ctl.text;
+                                            ctl.addListener(() =>
+                                                _reflectorCtl.text = ctl.text);
+                                            return TextField(
+                                              controller: ctl,
+                                              focusNode: focus,
+                                              decoration:
+                                                  const InputDecoration(
+                                                labelText: 'Reflector',
+                                                hintText: 'e.g. US-KCWide',
+                                                isDense: true,
+                                                border: OutlineInputBorder(),
+                                              ),
+                                              style: const TextStyle(
+                                                  fontSize: 13),
+                                              onSubmitted: (_) => onSubmit(),
+                                            );
+                                          },
+                                          onSelected: (s) =>
+                                              _reflectorCtl.text = s.server,
+                                        ),
+                                ),
+                                const SizedBox(width: 8),
+                                _linking
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2))
+                                    : FilledButton(
+                                        onPressed: _linkYsf,
+                                        child: const Text('Link'),
+                                      ),
+                                const SizedBox(width: 6),
+                                if (_ysfState!.reflector.isNotEmpty &&
+                                    !_linking)
+                                  OutlinedButton(
+                                    onPressed: _unlinkYsf,
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: Colors.orange,
+                                      side: const BorderSide(
+                                          color: Colors.orange),
+                                    ),
+                                    child: const Text('Unlink'),
+                                  ),
+                              ],
                             ),
-                      const SizedBox(width: 6),
-                      if (_ysfState!.reflector.isNotEmpty && !_linking)
-                        OutlinedButton(
-                          onPressed: _unlinkYsf,
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.orange,
-                            side: const BorderSide(color: Colors.orange),
-                          ),
-                          child: const Text('Unlink'),
+                          ],
                         ),
+                        const SizedBox(height: 16),
+                      ],
+
+                      // Last Heard
+                      _SectionCard(
+                        title: 'Last Heard',
+                        icon: Icons.hearing,
+                        children: [
+                          if (_lastHeard.isEmpty)
+                            Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 8),
+                              child: Text('No transmissions heard yet.',
+                                  style: TextStyle(
+                                      color: Colors.grey.shade500)),
+                            )
+                          else
+                            _LastHeardTable(
+                              entries: _lastHeard,
+                              onCallsignTap: widget.qsoController != null
+                                  ? (c) =>
+                                      widget.qsoController!.loadCallsign(c)
+                                  : null,
+                            ),
+                        ],
+                      ),
                     ],
                   ),
-                ],
-              ),
-              const SizedBox(height: 16),
-            ],
-
-            // Last Heard
-            _SectionCard(
-              title: 'Last Heard',
-              icon: Icons.hearing,
-              children: [
-                if (_lastHeard.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Text('No transmissions heard yet.',
-                        style: TextStyle(color: Colors.grey.shade500)),
-                  )
-                else
-                  _LastHeardTable(entries: _lastHeard),
-              ],
-            ),
-            const SizedBox(height: 16),
-          ],
-
-          // 4. Rig settings (rigctl / console types)
-          if (isRigType && widget.device.hasRigctld) ...[
-            _SectionCard(
-              title: 'Rig Configuration',
-              icon: Icons.radio,
-              children: [
-                FilledButton.icon(
-                  onPressed: _openRigSettings,
-                  icon: const Icon(Icons.settings, size: 16),
-                  label: const Text('Configure Rig...'),
                 ),
-                if (widget.onAddRig != null) ...[
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    onPressed: widget.onAddRig,
-                    icon: const Icon(Icons.add, size: 16),
-                    label: const Text('Add Rig'),
+
+                // ── Config tab ────────────────────────────────────────
+                SingleChildScrollView(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _buildConfigCards(status),
                   ),
-                ],
+                ),
               ],
             ),
-            const SizedBox(height: 16),
-          ],
-
-          // 5. Services card
-          _SectionCard(
-            title: 'Services',
-            icon: Icons.miscellaneous_services,
-            children: [
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  if (widget.device.hasRigctld)
-                    _ServiceButton(
-                      label: 'rigctld',
-                      onRestart: () => _restartService('rigctld'),
-                    ),
-                  if (isHotspot) ...[
-                    _ServiceButton(
-                      label: 'mmdvmhost',
-                      onRestart: () => _restartService('mmdvmhost'),
-                    ),
-                    _ServiceButton(
-                      label: 'dmrgateway',
-                      onRestart: () => _restartService('dmr'),
-                    ),
-                    _ServiceButton(
-                      label: 'ysfgateway',
-                      onRestart: () => _restartService('ysf'),
-                    ),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 8),
-              const Divider(),
-              const SizedBox(height: 4),
-              OutlinedButton.icon(
-                onPressed: _reboot,
-                icon: const Icon(Icons.power_settings_new,
-                    size: 16, color: Colors.orange),
-                label: const Text('Reboot Device',
-                    style: TextStyle(color: Colors.orange)),
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Colors.orange),
-                ),
-              ),
-            ],
           ),
         ],
       ),
     );
+  }
+
+  List<Widget> _buildConfigCards(DeviceStatus status) {
+    final isHotspot = status.type == 'hotspot';
+    final isRigType =
+        status.type == 'rigctl' || status.type == 'console';
+
+    return [
+      // Status card
+      _SectionCard(
+        title: 'Status',
+        icon: Icons.info_outline,
+        children: [
+          _InfoRow('Type', status.type),
+          _InfoRow('Callsign', status.callsign),
+          _InfoRow('Hostname', status.hostname),
+          _InfoRow('Version', status.version),
+          _InfoRow('Uptime', _formatUptime(status.uptime)),
+          if (status.cpuPercent > 0 ||
+              status.memTotalMb > 0 ||
+              status.diskTotalGb > 0) ...[
+            const SizedBox(height: 4),
+            _MetricRow('CPU', status.cpuPercent / 100,
+                '${status.cpuPercent.toStringAsFixed(1)}%'),
+            if (status.memTotalMb > 0)
+              _MetricRow(
+                'Memory',
+                status.memUsedMb / status.memTotalMb,
+                '${status.memUsedMb} / ${status.memTotalMb} MB',
+              ),
+            if (status.diskTotalGb > 0)
+              _InfoRow('Disk',
+                  '${status.diskUsedGb.toStringAsFixed(1)} / ${status.diskTotalGb.toStringAsFixed(1)} GB'),
+          ],
+        ],
+      ),
+      const SizedBox(height: 16),
+
+      // Network card
+      if (_network != null) ...[
+        _SectionCard(
+          title: 'Network',
+          icon: Icons.wifi,
+          children: [
+            _InfoRow('Mode', _network!.mode),
+            if (_network!.ssid.isNotEmpty) _InfoRow('SSID', _network!.ssid),
+            if (_network!.ip.isNotEmpty) _InfoRow('IP', _network!.ip),
+            if (_network!.networkInterface.isNotEmpty)
+              _InfoRow('Interface', _network!.networkInterface),
+            if (_network!.mode == 'wifi' && _network!.signalDbm != 0)
+              _InfoRow('Signal', '${_network!.signalDbm} dBm'),
+            _InfoRow('Connected', _network!.connected ? 'Yes' : 'No'),
+          ],
+        ),
+        const SizedBox(height: 16),
+      ],
+
+      // WiFi config card
+      if (_wifiNetworks != null) ...[
+        _SectionCard(
+          title: 'WiFi Networks',
+          icon: Icons.wifi,
+          trailing: _wifiDirty
+              ? FilledButton(
+                  onPressed: _saveWifi,
+                  child: const Text('Save'),
+                )
+              : null,
+          children: [
+            if (_wifiNetworks!.isEmpty)
+              Text('No networks configured.',
+                  style: TextStyle(color: Colors.grey.shade500)),
+            ..._wifiNetworks!.map((net) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.wifi, size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(net.ssid,
+                            style: const TextStyle(
+                                fontSize: 13, fontFamily: 'monospace')),
+                      ),
+                      Text('Priority ${net.priority}',
+                          style: TextStyle(
+                              fontSize: 11, color: Colors.grey.shade500)),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        onPressed: () => setState(() {
+                          _wifiNetworks!.remove(net);
+                          _wifiDirty = true;
+                        }),
+                        icon: const Icon(Icons.close, size: 14),
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        tooltip: 'Remove network',
+                      ),
+                    ],
+                  ),
+                )),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _showAddWifiDialog,
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('Add Network'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+      ],
+
+      // Hotspot Configuration card
+      if (isHotspot && _hotspot != null) ...[
+        _SectionCard(
+          title: 'Hotspot Configuration',
+          icon: Icons.cell_tower,
+          trailing: _saving
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : FilledButton(
+                  onPressed: _hotspotDirty ? _saveHotspot : null,
+                  child: const Text('Save'),
+                ),
+          children: [
+            TextField(
+              controller: _rfFreqCtl,
+              decoration: const InputDecoration(
+                labelText: 'RF Frequency (MHz)',
+                hintText: '438.8000',
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+              style: const TextStyle(fontFamily: 'monospace'),
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              onChanged: (_) => setState(() => _hotspotDirty = true),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              children: [
+                FilterChip(
+                  label: const Text('DMR'),
+                  selected: _dmrEnabled,
+                  onSelected: (v) => setState(() {
+                    _dmrEnabled = v;
+                    if (!v) _dmr2ysfEnabled = false;
+                    _hotspotDirty = true;
+                  }),
+                ),
+                FilterChip(
+                  label: const Text('YSF'),
+                  selected: _ysfEnabled,
+                  onSelected: (v) => setState(() {
+                    _ysfEnabled = v;
+                    if (!v) _ysf2dmrEnabled = false;
+                    _hotspotDirty = true;
+                  }),
+                ),
+                if (_ysfEnabled)
+                  FilterChip(
+                    label: const Text('YSF\u2192DMR'),
+                    selected: _ysf2dmrEnabled,
+                    onSelected: (v) => setState(() {
+                      _ysf2dmrEnabled = v;
+                      _hotspotDirty = true;
+                    }),
+                  ),
+                if (_dmrEnabled)
+                  FilterChip(
+                    label: const Text('DMR\u2192YSF'),
+                    selected: _dmr2ysfEnabled,
+                    onSelected: (v) => setState(() {
+                      _dmr2ysfEnabled = v;
+                      _hotspotDirty = true;
+                    }),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (_dmrEnabled) ...[
+              Text('DMR',
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey.shade300)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: TextField(
+                      controller: _dmrServerCtl,
+                      decoration: const InputDecoration(
+                          labelText: 'BrandMeister Server',
+                          isDense: true,
+                          border: OutlineInputBorder()),
+                      style: const TextStyle(fontSize: 13),
+                      onChanged: (_) =>
+                          setState(() => _hotspotDirty = true),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: _colorcodeCtl,
+                      decoration: const InputDecoration(
+                          labelText: 'Color Code',
+                          isDense: true,
+                          border: OutlineInputBorder()),
+                      style: const TextStyle(fontSize: 13),
+                      keyboardType: TextInputType.number,
+                      onChanged: (_) =>
+                          setState(() => _hotspotDirty = true),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _dmrPasswordCtl,
+                decoration: const InputDecoration(
+                    labelText: 'Password',
+                    isDense: true,
+                    border: OutlineInputBorder()),
+                style: const TextStyle(fontSize: 13),
+                obscureText: true,
+                onChanged: (_) => setState(() => _hotspotDirty = true),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _dmrIdCtl,
+                decoration: const InputDecoration(
+                    labelText: 'DMR ID',
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                    hintText: '1000000–9999999'),
+                style: const TextStyle(fontSize: 13),
+                keyboardType: TextInputType.number,
+                onChanged: (_) => setState(() => _hotspotDirty = true),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Text('Talkgroups',
+                      style: TextStyle(
+                          fontSize: 12, color: Colors.grey.shade400)),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: _showAddTalkgroup,
+                    icon: const Icon(Icons.add, size: 18),
+                    tooltip: 'Add talkgroup',
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: _talkgroups.map((tg) {
+                  return Chip(
+                    label: Text(
+                        '${tg.name.isNotEmpty ? tg.name : 'TG'}:${tg.id} (S${tg.slot})',
+                        style: const TextStyle(fontSize: 11)),
+                    deleteIcon: const Icon(Icons.close, size: 14),
+                    onDeleted: () => setState(() {
+                      _talkgroups.remove(tg);
+                      _hotspotDirty = true;
+                    }),
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 12),
+            ],
+            if (_ysfEnabled) ...[
+              Text('YSF',
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey.shade300)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _ysfReflectorCtl,
+                      decoration: const InputDecoration(
+                          labelText: 'Reflector',
+                          isDense: true,
+                          border: OutlineInputBorder()),
+                      style: const TextStyle(fontSize: 13),
+                      onChanged: (_) =>
+                          setState(() => _hotspotDirty = true),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: _ysfDescCtl,
+                      decoration: const InputDecoration(
+                          labelText: 'Description',
+                          isDense: true,
+                          border: OutlineInputBorder()),
+                      style: const TextStyle(fontSize: 13),
+                      onChanged: (_) =>
+                          setState(() => _hotspotDirty = true),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+            ],
+          ],
+        ),
+        const SizedBox(height: 16),
+      ],
+
+      // Rig Configuration card
+      if (isRigType && widget.device.hasRigctld) ...[
+        _SectionCard(
+          title: 'Rig Configuration',
+          icon: Icons.radio,
+          children: [
+            FilledButton.icon(
+              onPressed: _openRigSettings,
+              icon: const Icon(Icons.settings, size: 16),
+              label: const Text('Configure Rig...'),
+            ),
+            if (widget.onAddRig != null) ...[
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: widget.onAddRig,
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Add Rig'),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 16),
+      ],
+
+      // Services card
+      _SectionCard(
+        title: 'Services',
+        icon: Icons.miscellaneous_services,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (widget.device.hasRigctld)
+                _ServiceButton(
+                  label: 'rigctld',
+                  onRestart: () => _restartService('rigctld'),
+                ),
+              if (isHotspot) ...[
+                _ServiceButton(
+                  label: 'mmdvmhost',
+                  onRestart: () => _restartService('mmdvmhost'),
+                ),
+                _ServiceButton(
+                  label: 'dmrgateway',
+                  onRestart: () => _restartService('dmr'),
+                ),
+                _ServiceButton(
+                  label: 'ysfgateway',
+                  onRestart: () => _restartService('ysf'),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Divider(),
+          const SizedBox(height: 4),
+          OutlinedButton.icon(
+            onPressed: _reboot,
+            icon: const Icon(Icons.power_settings_new,
+                size: 16, color: Colors.orange),
+            label: const Text('Reboot Device',
+                style: TextStyle(color: Colors.orange)),
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: Colors.orange),
+            ),
+          ),
+        ],
+      ),
+    ];
   }
 }
 
@@ -1482,7 +1587,8 @@ class _YsfLinkBadge extends StatelessWidget {
 
 class _LastHeardTable extends StatelessWidget {
   final List<HotspotLastHeardEntry> entries;
-  const _LastHeardTable({required this.entries});
+  final void Function(String callsign)? onCallsignTap;
+  const _LastHeardTable({required this.entries, this.onCallsignTap});
 
   Color _modeColor(String mode) => switch (mode) {
         'DMR' => Colors.blue.shade400,
@@ -1532,14 +1638,24 @@ class _LastHeardTable extends StatelessWidget {
                 // Callsign
                 Padding(
                   padding: const EdgeInsets.fromLTRB(0, 6, 12, 2),
-                  child: Text(
-                    e.callsign,
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: isActive
-                            ? Colors.green.shade400
-                            : null),
+                  child: GestureDetector(
+                    onTap: onCallsignTap != null
+                        ? () => onCallsignTap!(e.callsign)
+                        : null,
+                    child: Text(
+                      e.callsign,
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: isActive
+                              ? Colors.green.shade400
+                              : onCallsignTap != null
+                                  ? Colors.blue.shade300
+                                  : null,
+                          decoration: onCallsignTap != null
+                              ? TextDecoration.underline
+                              : null),
+                    ),
                   ),
                 ),
                 // Mode

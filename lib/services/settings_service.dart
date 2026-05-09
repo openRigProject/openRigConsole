@@ -29,6 +29,7 @@ class SettingsService {
   static const _keyLayoutTopZone  = 'layout_top_zone';
   static const _keyLayoutMapWidth  = 'layout_map_width';
   static const _keyLayoutStatsWidth = 'layout_stats_width';
+  static const _keyLayoutDevicesListWidth = 'layout_devices_list_width';
 
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
@@ -111,10 +112,12 @@ class SettingsService {
   double get layoutTopZone   => _prefs.getDouble(_keyLayoutTopZone)   ?? 320;
   double get layoutMapWidth  => _prefs.getDouble(_keyLayoutMapWidth)  ?? 220;
   double get layoutStatsWidth => _prefs.getDouble(_keyLayoutStatsWidth) ?? 160;
+  double get layoutDevicesListWidth => _prefs.getDouble(_keyLayoutDevicesListWidth) ?? 280;
 
   Future<void> setLayoutTopZone(double v)   async => _prefs.setDouble(_keyLayoutTopZone, v);
   Future<void> setLayoutMapWidth(double v)  async => _prefs.setDouble(_keyLayoutMapWidth, v);
   Future<void> setLayoutStatsWidth(double v) async => _prefs.setDouble(_keyLayoutStatsWidth, v);
+  Future<void> setLayoutDevicesListWidth(double v) async => _prefs.setDouble(_keyLayoutDevicesListWidth, v);
 
   // -- Log file path --
 

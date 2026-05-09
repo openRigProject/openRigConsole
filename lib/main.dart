@@ -374,6 +374,7 @@ class _AppShellState extends State<AppShell>
                 DevicesScreen(
                   connectionService: _connectionService,
                   settings: _settings,
+                  qsoController: _qsoController,
                 ),
               ],
             ),
