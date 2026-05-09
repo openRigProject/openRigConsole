@@ -23,7 +23,10 @@ class DevicesScreen extends StatefulWidget {
   State<DevicesScreen> createState() => _DevicesScreenState();
 }
 
-class _DevicesScreenState extends State<DevicesScreen> {
+class _DevicesScreenState extends State<DevicesScreen>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
   OpenRigDevice? _selectedDevice;
   StreamSubscription<OpenRigDevice>? _foundSub;
   StreamSubscription<String>? _lostSub;
@@ -90,6 +93,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     if (!_cs.mdnsAvailable) {
       return Center(
         child: Column(
@@ -494,13 +498,17 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
       (entry) {
         if (!mounted) return;
         setState(() {
-          final idx = _lastHeard.indexWhere((e) => e.sameTransmission(entry));
-          if (idx >= 0) {
-            _lastHeard[idx] = entry; // update in-progress QSO
-          } else {
-            _lastHeard.insert(0, entry); // prepend newest at top
-            if (_lastHeard.length > 50) _lastHeard.removeLast();
+          // Same transmission (callsign+mode+timestamp): patch duration/BER/loss in place.
+          final sameIdx = _lastHeard.indexWhere((e) => e.sameTransmission(entry));
+          if (sameIdx >= 0) {
+            _lastHeard[sameIdx] = entry;
+            return;
           }
+          // New transmission: evict any previous row for this callsign+mode, then prepend.
+          _lastHeard.removeWhere(
+              (e) => e.callsign == entry.callsign && e.mode == entry.mode);
+          _lastHeard.insert(0, entry);
+          if (_lastHeard.length > 50) _lastHeard.removeLast();
         });
       },
       onError: (_) {
@@ -1585,10 +1593,31 @@ class _YsfLinkBadge extends StatelessWidget {
 
 // -- Last Heard table --
 
-class _LastHeardTable extends StatelessWidget {
+class _LastHeardTable extends StatefulWidget {
   final List<HotspotLastHeardEntry> entries;
   final void Function(String callsign)? onCallsignTap;
   const _LastHeardTable({required this.entries, this.onCallsignTap});
+
+  @override
+  State<_LastHeardTable> createState() => _LastHeardTableState();
+}
+
+class _LastHeardTableState extends State<_LastHeardTable> {
+  late Timer _timeAgoTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    // Refresh "time ago" labels every 30 seconds.
+    _timeAgoTimer = Timer.periodic(
+        const Duration(seconds: 30), (_) { if (mounted) setState(() {}); });
+  }
+
+  @override
+  void dispose() {
+    _timeAgoTimer.cancel();
+    super.dispose();
+  }
 
   Color _modeColor(String mode) => switch (mode) {
         'DMR' => Colors.blue.shade400,
@@ -1631,7 +1660,7 @@ class _LastHeardTable extends StatelessWidget {
                 .toList(),
           ),
           // Rows (newest first)
-          ...entries.map((e) {
+          ...widget.entries.map((e) {
             final isActive = e.isActive;
             return TableRow(
               children: [
@@ -1639,8 +1668,8 @@ class _LastHeardTable extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(0, 6, 12, 2),
                   child: GestureDetector(
-                    onTap: onCallsignTap != null
-                        ? () => onCallsignTap!(e.callsign)
+                    onTap: widget.onCallsignTap != null
+                        ? () => widget.onCallsignTap!(e.callsign)
                         : null,
                     child: Text(
                       e.callsign,
@@ -1649,10 +1678,10 @@ class _LastHeardTable extends StatelessWidget {
                           fontWeight: FontWeight.bold,
                           color: isActive
                               ? Colors.green.shade400
-                              : onCallsignTap != null
+                              : widget.onCallsignTap != null
                                   ? Colors.blue.shade300
                                   : null,
-                          decoration: onCallsignTap != null
+                          decoration: widget.onCallsignTap != null
                               ? TextDecoration.underline
                               : null),
                     ),
@@ -1698,15 +1727,26 @@ class _LastHeardTable extends StatelessWidget {
                           color: Colors.grey.shade400,
                           fontFamily: 'monospace')),
                 ),
-                // Time
+                // Time — formatted clock + "Xm ago" sub-label
                 Padding(
                   padding: const EdgeInsets.fromLTRB(0, 6, 0, 2),
-                  child: Text(
-                    _formatTime(e.timestamp),
-                    style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey.shade400,
-                        fontFamily: 'monospace'),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _formatTime(e.timestamp),
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey.shade400,
+                            fontFamily: 'monospace'),
+                      ),
+                      Text(
+                        _timeAgo(e.timestamp),
+                        style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.grey.shade600),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -1727,6 +1767,19 @@ class _LastHeardTable extends StatelessWidget {
       return '$h:$m:$s';
     } catch (_) {
       return ts;
+    }
+  }
+
+  String _timeAgo(String ts) {
+    if (ts.isEmpty) return '';
+    try {
+      final d = DateTime.now().toUtc().difference(DateTime.parse(ts)).inSeconds;
+      if (d < 60) return '${d}s ago';
+      if (d < 3600) return '${d ~/ 60}m ago';
+      if (d < 86400) return '${d ~/ 3600}h ago';
+      return '${d ~/ 86400}d ago';
+    } catch (_) {
+      return '';
     }
   }
 }
