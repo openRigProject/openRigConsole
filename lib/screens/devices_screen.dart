@@ -511,9 +511,6 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
           if (_lastHeard.length > 50) _lastHeard.removeLast();
         });
       },
-      onError: (_) {
-        // Stream died — will be empty until device reconnects.
-      },
     );
   }
 
