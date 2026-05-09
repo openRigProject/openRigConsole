@@ -10,3 +10,4 @@ build/
 assets/rigctld/linux/
 assets/rigctld/macos/
 assets/rigctld/windows/
+devtools_options.yaml
