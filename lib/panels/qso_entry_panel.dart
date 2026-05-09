@@ -481,18 +481,16 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
 
       client.dispose();
       if (!mounted) return;
+      // Compute map location before setState so we can fire the callback
+      // after the build cycle rather than from inside the setState closure.
+      double? mapLat, mapLon;
+      if (info!.grid.isNotEmpty && !_hasPotaLocation) {
+        final loc = gridToLatLon(info.grid);
+        if (loc != null) { mapLat = loc.lat; mapLon = loc.lon; }
+      }
       setState(() {
         _qrzInfo = info;
-        if (info!.grid.isNotEmpty) {
-          _gridCtl.text = info.grid;
-          // Don't move the map when a POTA location override is already in place.
-          if (!_hasPotaLocation) {
-            final loc = gridToLatLon(info.grid);
-            if (loc != null) {
-              widget.onLocationChanged?.call(loc.lat, loc.lon, raw);
-            }
-          }
-        }
+        if (info!.grid.isNotEmpty)    _gridCtl.text    = info.grid;
         if (info.cqZone.isNotEmpty)   _cqCtl.text      = info.cqZone;
         if (info.ituZone.isNotEmpty)  _ituCtl.text     = info.ituZone;
         if (info.iota.isNotEmpty)     _iotaCtl.text    = info.iota;
@@ -505,6 +503,13 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
           _dxccCtl.text = info.dxcc;
         }
       });
+      // Update the map after the build cycle so the ValueNotifier update
+      // reaches MapPanel cleanly rather than from within setState.
+      if (mapLat != null && mapLon != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) widget.onLocationChanged?.call(mapLat!, mapLon!, raw);
+        });
+      }
     } on QrzXmlException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
