@@ -1581,9 +1581,11 @@ class _YsfLinkBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ls = state.linkState.toLowerCase();
+    // YSFGateway states: "linking" = connected (permanent active state),
+    // "relinking" = brief reconnect attempt, "unlinked" = disconnected.
     final (label, color) = switch (ls) {
-      'linking' || 'relinking' => ('Linking…', Colors.orange),
-      'unlinked' => ('Unlinked', Colors.grey),
+      'linking' => ('Linked', Colors.green),
+      'relinking' => ('Reconnecting…', Colors.orange),
       _ when state.reflector.isNotEmpty => ('Linked', Colors.green),
       _ => ('Unlinked', Colors.grey),
     };
