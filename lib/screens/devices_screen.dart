@@ -336,13 +336,24 @@ class _DeviceDetailPanel extends StatefulWidget {
 
 class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
   OpenRigApiClient? _api;
+  OpenRigHotspotClient? _hotspotClient;
   DeviceStatus? _status;
   HotspotConfig? _hotspot;
   NetworkStatus? _network;
   List<WifiNetwork>? _wifiNetworks;
-  List<HotspotClient>? _clients;
   bool _loading = true;
   String? _error;
+
+  // ── Last Heard ────────────────────────────────────────────────────────────
+  final List<HotspotLastHeardEntry> _lastHeard = [];
+  StreamSubscription<HotspotLastHeardEntry>? _lastHeardSub;
+
+  // ── YSF Reflector Manager ─────────────────────────────────────────────────
+  HotspotYsfState? _ysfState;
+  final _reflectorCtl = TextEditingController();
+  List<YsfServer> _ysfServers = [];
+  bool _serversLoading = false;
+  bool _linking = false;
 
   // Hotspot edit controllers
   final _rfFreqCtl = TextEditingController();
@@ -369,7 +380,9 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
 
   @override
   void dispose() {
+    _lastHeardSub?.cancel();
     _api?.dispose();
+    _hotspotClient?.dispose();
     _rfFreqCtl.dispose();
     _dmrIdCtl.dispose();
     _dmrServerCtl.dispose();
@@ -377,6 +390,7 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
     _colorcodeCtl.dispose();
     _ysfReflectorCtl.dispose();
     _ysfDescCtl.dispose();
+    _reflectorCtl.dispose();
     super.dispose();
   }
 
@@ -386,7 +400,11 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
       _error = null;
     });
 
+    _lastHeardSub?.cancel();
+    _lastHeardSub = null;
     _api?.dispose();
+    _hotspotClient?.dispose();
+
     final api = OpenRigApiClient(host: widget.device.host);
     _api = api;
 
@@ -395,20 +413,14 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
       NetworkStatus? network;
       try {
         network = await api.getNetworkStatus();
-      } catch (_) {
-        // Device may not support this endpoint yet.
-      }
+      } catch (_) {}
       List<WifiNetwork>? wifiNetworks;
       try {
         wifiNetworks = await api.getWifi();
-      } catch (_) {
-        // Device may not support this endpoint yet.
-      }
+      } catch (_) {}
       HotspotConfig? hotspot;
-      List<HotspotClient>? clients;
       if (status.type == 'hotspot') {
         hotspot = await api.getHotspot();
-        clients = await api.getClients();
       }
       if (!mounted) return;
       setState(() {
@@ -417,10 +429,14 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
         _wifiNetworks = wifiNetworks;
         _wifiDirty = false;
         _hotspot = hotspot;
-        _clients = clients;
         _loading = false;
         if (hotspot != null) _populateHotspotFields(hotspot);
       });
+
+      // Start hotspot live features for hotspot devices.
+      if (status.type == 'hotspot') {
+        _startHotspotLive();
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -428,6 +444,102 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
           _loading = false;
         });
       }
+    }
+  }
+
+  void _startHotspotLive() {
+    final client = OpenRigHotspotClient(host: widget.device.host);
+    _hotspotClient = client;
+
+    // Load YSF state and server list.
+    _refreshYsfState();
+    _loadYsfServers();
+
+    // Start last-heard stream.
+    _lastHeard.clear();
+    _lastHeardSub = client.streamLastHeard().listen(
+      (entry) {
+        if (!mounted) return;
+        setState(() {
+          final idx = _lastHeard.indexWhere((e) => e.sameTransmission(entry));
+          if (idx >= 0) {
+            _lastHeard[idx] = entry; // update in-progress QSO
+          } else {
+            _lastHeard.insert(0, entry); // prepend newest at top
+            if (_lastHeard.length > 50) _lastHeard.removeLast();
+          }
+        });
+      },
+      onError: (_) {
+        // Stream died — will be empty until device reconnects.
+      },
+    );
+  }
+
+  Future<void> _refreshYsfState() async {
+    if (_hotspotClient == null) return;
+    try {
+      final raw = await _hotspotClient!.getHotspot();
+      if (mounted) {
+        setState(() => _ysfState = HotspotYsfState.fromJson(raw));
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _loadYsfServers() async {
+    if (_hotspotClient == null) return;
+    if (mounted) setState(() => _serversLoading = true);
+    try {
+      final servers = await _hotspotClient!.getServers('ysf');
+      if (mounted) setState(() => _ysfServers = servers);
+    } catch (_) {}
+    if (mounted) setState(() => _serversLoading = false);
+  }
+
+  Future<void> _linkYsf() async {
+    final reflector = _reflectorCtl.text.trim();
+    if (reflector.isEmpty || _hotspotClient == null) return;
+    setState(() => _linking = true);
+    try {
+      await _hotspotClient!.linkYsf(reflector);
+      await Future.delayed(const Duration(milliseconds: 800));
+      await _refreshYsfState();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Linking to $reflector…')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Link failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _linking = false);
+    }
+  }
+
+  Future<void> _unlinkYsf() async {
+    if (_hotspotClient == null) return;
+    setState(() => _linking = true);
+    try {
+      await _hotspotClient!.unlinkYsf();
+      await Future.delayed(const Duration(milliseconds: 800));
+      await _refreshYsfState();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unlinked from reflector')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Unlink failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _linking = false);
     }
   }
 
@@ -670,14 +782,6 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
         );
       }
     }
-  }
-
-  Future<void> _refreshClients() async {
-    if (_api == null) return;
-    try {
-      final clients = await _api!.getClients();
-      if (mounted) setState(() => _clients = clients);
-    } catch (_) {}
   }
 
   Future<void> _restartService(String name) async {
@@ -1158,49 +1262,114 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
             ),
             const SizedBox(height: 16),
 
-            // 3. Connected clients
-            _SectionCard(
-              title: 'Connected Clients',
-              icon: Icons.people,
-              trailing: IconButton(
-                onPressed: _refreshClients,
-                icon: const Icon(Icons.refresh, size: 18),
-                tooltip: 'Refresh',
-                visualDensity: VisualDensity.compact,
+            // YSF Reflector Manager
+            if (_ysfState != null && _ysfState!.enabled) ...[
+              _SectionCard(
+                title: 'YSF Reflector Manager',
+                icon: Icons.cell_tower,
+                trailing: _ysfState == null
+                    ? null
+                    : _YsfLinkBadge(_ysfState!),
+                children: [
+                  if (_ysfState!.reflector.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Row(
+                        children: [
+                          Text('Linked to ',
+                              style: TextStyle(
+                                  color: Colors.grey.shade400,
+                                  fontSize: 13)),
+                          Text(_ysfState!.reflector,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13)),
+                        ],
+                      ),
+                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _serversLoading
+                            ? const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 8),
+                                child: LinearProgressIndicator(),
+                              )
+                            : Autocomplete<YsfServer>(
+                                displayStringForOption: (s) => s.label,
+                                optionsBuilder: (text) {
+                                  final q = text.text.toUpperCase();
+                                  if (q.isEmpty) return _ysfServers;
+                                  return _ysfServers.where((s) =>
+                                      s.server.contains(q) ||
+                                      s.label
+                                          .toUpperCase()
+                                          .contains(q));
+                                },
+                                fieldViewBuilder:
+                                    (ctx, ctl, focus, onSubmit) {
+                                  _reflectorCtl.text = ctl.text;
+                                  ctl.addListener(
+                                      () => _reflectorCtl.text = ctl.text);
+                                  return TextField(
+                                    controller: ctl,
+                                    focusNode: focus,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Reflector',
+                                      hintText: 'e.g. US-KCWide',
+                                      isDense: true,
+                                      border: OutlineInputBorder(),
+                                    ),
+                                    style:
+                                        const TextStyle(fontSize: 13),
+                                    onSubmitted: (_) => onSubmit(),
+                                  );
+                                },
+                                onSelected: (s) =>
+                                    _reflectorCtl.text = s.server,
+                              ),
+                      ),
+                      const SizedBox(width: 8),
+                      _linking
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2))
+                          : FilledButton(
+                              onPressed: _linkYsf,
+                              child: const Text('Link'),
+                            ),
+                      const SizedBox(width: 6),
+                      if (_ysfState!.reflector.isNotEmpty && !_linking)
+                        OutlinedButton(
+                          onPressed: _unlinkYsf,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.orange,
+                            side: const BorderSide(color: Colors.orange),
+                          ),
+                          child: const Text('Unlink'),
+                        ),
+                    ],
+                  ),
+                ],
               ),
+              const SizedBox(height: 16),
+            ],
+
+            // Last Heard
+            _SectionCard(
+              title: 'Last Heard',
+              icon: Icons.hearing,
               children: [
-                if (_clients == null || _clients!.isEmpty)
+                if (_lastHeard.isEmpty)
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Text('No clients heard recently.',
-                        style:
-                            TextStyle(color: Colors.grey.shade500)),
+                    child: Text('No transmissions heard yet.',
+                        style: TextStyle(color: Colors.grey.shade500)),
                   )
                 else
-                  SizedBox(
-                    width: double.infinity,
-                    child: DataTable(
-                      headingRowHeight: 36,
-                      dataRowMinHeight: 32,
-                      dataRowMaxHeight: 36,
-                      columns: const [
-                        DataColumn(label: Text('Callsign')),
-                        DataColumn(label: Text('Mode')),
-                        DataColumn(label: Text('Duration')),
-                      ],
-                      rows: _clients!.map((c) {
-                        return DataRow(cells: [
-                          DataCell(Text(c.callsign,
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.bold))),
-                          DataCell(Text(c.mode)),
-                          DataCell(Text('${c.duration}s',
-                              style: const TextStyle(
-                                  fontFamily: 'monospace'))),
-                        ]);
-                      }).toList(),
-                    ),
-                  ),
+                  _LastHeardTable(entries: _lastHeard),
               ],
             ),
             const SizedBox(height: 16),
@@ -1277,6 +1446,221 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// -- YSF link state badge --
+
+class _YsfLinkBadge extends StatelessWidget {
+  final HotspotYsfState state;
+  const _YsfLinkBadge(this.state);
+
+  @override
+  Widget build(BuildContext context) {
+    final ls = state.linkState.toLowerCase();
+    final (label, color) = switch (ls) {
+      'linking' || 'relinking' => ('Linking…', Colors.orange),
+      'unlinked' => ('Unlinked', Colors.grey),
+      _ when state.reflector.isNotEmpty => ('Linked', Colors.green),
+      _ => ('Unlinked', Colors.grey),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withAlpha(40),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withAlpha(120)),
+      ),
+      child: Text(label,
+          style: TextStyle(fontSize: 11, color: color)),
+    );
+  }
+}
+
+// -- Last Heard table --
+
+class _LastHeardTable extends StatelessWidget {
+  final List<HotspotLastHeardEntry> entries;
+  const _LastHeardTable({required this.entries});
+
+  Color _modeColor(String mode) => switch (mode) {
+        'DMR' => Colors.blue.shade400,
+        'YSF' => Colors.green.shade400,
+        _ => Colors.grey.shade400,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: Table(
+        columnWidths: const {
+          0: FlexColumnWidth(2),   // Callsign
+          1: IntrinsicColumnWidth(), // Mode
+          2: FlexColumnWidth(2),   // Info
+          3: IntrinsicColumnWidth(), // Duration
+          4: IntrinsicColumnWidth(), // BER
+          5: IntrinsicColumnWidth(), // Loss
+          6: IntrinsicColumnWidth(), // Time
+        },
+        children: [
+          // Header
+          TableRow(
+            decoration: BoxDecoration(
+              border: Border(
+                  bottom: BorderSide(color: Colors.grey.shade800))),
+            children: [
+              'Callsign', 'Mode', 'Info', 'Duration', 'BER', 'Loss', 'Time'
+            ]
+                .map((h) => Padding(
+                      padding:
+                          const EdgeInsets.fromLTRB(0, 0, 12, 6),
+                      child: Text(h,
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey.shade500,
+                              fontWeight: FontWeight.bold)),
+                    ))
+                .toList(),
+          ),
+          // Rows (newest first)
+          ...entries.map((e) {
+            final isActive = e.isActive;
+            return TableRow(
+              children: [
+                // Callsign
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(0, 6, 12, 2),
+                  child: Text(
+                    e.callsign,
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: isActive
+                            ? Colors.green.shade400
+                            : null),
+                  ),
+                ),
+                // Mode
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(0, 6, 12, 2),
+                  child: Text(e.mode,
+                      style: TextStyle(
+                          fontSize: 12, color: _modeColor(e.mode))),
+                ),
+                // Info
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(0, 6, 12, 2),
+                  child: Text(e.info,
+                      style: const TextStyle(fontSize: 12)),
+                ),
+                // Duration
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(0, 6, 12, 2),
+                  child: isActive
+                      ? _ActiveTimer(since: e.timestamp)
+                      : Text(e.duration,
+                          style: const TextStyle(
+                              fontSize: 12, fontFamily: 'monospace')),
+                ),
+                // BER
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(0, 6, 12, 2),
+                  child: Text(e.ber,
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey.shade400,
+                          fontFamily: 'monospace')),
+                ),
+                // Loss
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(0, 6, 12, 2),
+                  child: Text(e.loss,
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey.shade400,
+                          fontFamily: 'monospace')),
+                ),
+                // Time
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(0, 6, 0, 2),
+                  child: Text(
+                    _formatTime(e.timestamp),
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade400,
+                        fontFamily: 'monospace'),
+                  ),
+                ),
+              ],
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  String _formatTime(String ts) {
+    if (ts.isEmpty) return '';
+    try {
+      final dt = DateTime.parse(ts).toLocal();
+      final h = dt.hour.toString().padLeft(2, '0');
+      final m = dt.minute.toString().padLeft(2, '0');
+      final s = dt.second.toString().padLeft(2, '0');
+      return '$h:$m:$s';
+    } catch (_) {
+      return ts;
+    }
+  }
+}
+
+// Counts up MM:SS from a given RFC3339 timestamp.
+class _ActiveTimer extends StatefulWidget {
+  final String since;
+  const _ActiveTimer({required this.since});
+
+  @override
+  State<_ActiveTimer> createState() => _ActiveTimerState();
+}
+
+class _ActiveTimerState extends State<_ActiveTimer> {
+  late Timer _timer;
+  Duration _elapsed = Duration.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    _update();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(_update);
+    });
+  }
+
+  void _update() {
+    try {
+      final start = DateTime.parse(widget.since);
+      _elapsed = DateTime.now().toUtc().difference(start);
+      if (_elapsed.isNegative) _elapsed = Duration.zero;
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _elapsed.inMinutes;
+    final s = _elapsed.inSeconds % 60;
+    return Text(
+      '$m:${s.toString().padLeft(2, '0')}',
+      style: TextStyle(
+          fontSize: 12,
+          fontFamily: 'monospace',
+          color: Colors.green.shade400),
     );
   }
 }
