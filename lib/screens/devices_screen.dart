@@ -509,6 +509,8 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
     _lastHeardSub = _hotspotClient!.streamLastHeard().listen(
       (entry) {
         if (!mounted) return;
+        // Track whether this is a new transmission so we can auto-load it.
+        var isNewTransmission = false;
         setState(() {
           // Same transmission (callsign+mode+timestamp): patch duration/BER/loss in place.
           final sameIdx = _lastHeard.indexWhere((e) => e.sameTransmission(entry));
@@ -517,11 +519,16 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
             return;
           }
           // New transmission: evict any previous row for this callsign+mode, then prepend.
+          isNewTransmission = true;
           _lastHeard.removeWhere(
               (e) => e.callsign == entry.callsign && e.mode == entry.mode);
           _lastHeard.insert(0, entry);
           if (_lastHeard.length > 50) _lastHeard.removeLast();
         });
+        // Auto-load callsign info when a new (not an update) transmission arrives.
+        if (isNewTransmission) {
+          widget.qsoController?.loadCallsign(entry.callsign);
+        }
       },
     );
   }
