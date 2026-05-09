@@ -390,6 +390,7 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
 
   // ── YSF Reflector Manager ─────────────────────────────────────────────────
   HotspotYsfState? _ysfState;
+  Timer? _ysfRefreshTimer;
   final _reflectorCtl = TextEditingController();
   List<YsfServer> _ysfServers = [];
   bool _serversLoading = false;
@@ -420,6 +421,7 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
 
   @override
   void dispose() {
+    _ysfRefreshTimer?.cancel();
     _lastHeardSub?.cancel();
     _hotspotClient?.dispose();
     _rfFreqCtl.dispose();
@@ -439,6 +441,8 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
       _error = null;
     });
 
+    _ysfRefreshTimer?.cancel();
+    _ysfRefreshTimer = null;
     _lastHeardSub?.cancel();
     _lastHeardSub = null;
     _hotspotClient?.dispose();
@@ -491,6 +495,14 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
     // Load YSF state and server list.
     _refreshYsfState();
     _loadYsfServers();
+
+    // Poll YSF state periodically so the reflector manager stays in sync
+    // with changes made from other UIs (web UI, another console session).
+    _ysfRefreshTimer?.cancel();
+    _ysfRefreshTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => _refreshYsfState(),
+    );
 
     // Start last-heard stream.
     _lastHeard.clear();
