@@ -421,11 +421,23 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
   @override
   void initState() {
     super.initState();
+    widget.tabController?.addListener(_onTabChanged);
     _loadDevice();
+  }
+
+  void _onTabChanged() {
+    // When the user switches back to the Devices tab (index 3), immediately
+    // reload the top-of-list callsign so the map stays current.
+    if (widget.tabController?.index == 3 &&
+        _lastHeard.isNotEmpty &&
+        widget.qsoController != null) {
+      widget.qsoController!.loadCallsign(_lastHeard.first.callsign);
+    }
   }
 
   @override
   void dispose() {
+    widget.tabController?.removeListener(_onTabChanged);
     _ysfRefreshTimer?.cancel();
     _lastHeardSub?.cancel();
     _hotspotClient?.dispose();
