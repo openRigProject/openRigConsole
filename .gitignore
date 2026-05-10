@@ -7,7 +7,11 @@ pubspec.lock
 build/
 
 # rigctld platform binaries — add your own from hamlib releases
-assets/rigctld/linux/
-assets/rigctld/macos/
-assets/rigctld/windows/
+# Directories are tracked (Flutter requires them to exist); binaries are not.
+assets/rigctld/linux/*
+assets/rigctld/macos/*
+assets/rigctld/windows/*
+!assets/rigctld/linux/.gitkeep
+!assets/rigctld/macos/.gitkeep
+!assets/rigctld/windows/.gitkeep
 devtools_options.yaml

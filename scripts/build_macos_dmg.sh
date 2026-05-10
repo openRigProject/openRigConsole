@@ -79,7 +79,7 @@ MOUNT_DIR=$(hdiutil attach -readwrite -noverify -noautoopen "$TMP_DMG" \
 # Give Finder a moment to register the volume
 sleep 1
 
-osascript <<APPLESCRIPT
+osascript <<APPLESCRIPT || echo "  (Finder window styling skipped — headless environment)"
 tell application "Finder"
   tell disk "$APP_NAME"
     open
