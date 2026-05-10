@@ -1,0 +1,121 @@
+name: Build Release
+
+on:
+  # Trigger manually from the Actions tab
+  workflow_dispatch:
+
+  # Trigger automatically on version tags: git tag v0.2.0 && git push --tags
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  # ── macOS DMG ──────────────────────────────────────────────────────────────
+  build-macos:
+    name: macOS DMG
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout openRigConsole
+        uses: actions/checkout@v4
+        with:
+          path: openRigConsole
+
+      - name: Checkout openrig_core
+        uses: actions/checkout@v4
+        with:
+          repository: openRigProject/openrig_core
+          path: openrig_core
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install dependencies
+        working-directory: openRigConsole
+        run: flutter pub get
+
+      - name: Build macOS release
+        working-directory: openRigConsole
+        run: flutter build macos --release
+
+      - name: Build DMG
+        working-directory: openRigConsole
+        run: ./scripts/build_macos_dmg.sh --skip-build
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: openRigConsole-macos
+          path: openRigConsole/build/openRigConsole-*.dmg
+          if-no-files-found: error
+
+  # ── Windows installer ──────────────────────────────────────────────────────
+  build-windows:
+    name: Windows Installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout openRigConsole
+        uses: actions/checkout@v4
+        with:
+          path: openRigConsole
+
+      - name: Checkout openrig_core
+        uses: actions/checkout@v4
+        with:
+          repository: openRigProject/openrig_core
+          path: openrig_core
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install dependencies
+        working-directory: openRigConsole
+        run: flutter pub get
+
+      - name: Build Windows release
+        working-directory: openRigConsole
+        run: flutter build windows --release
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        working-directory: openRigConsole
+        shell: pwsh
+        run: .\scripts\build_windows_installer.ps1 --skip-build
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: openRigConsole-windows
+          path: openRigConsole/build/openRigConsole-*-windows-setup.exe
+          if-no-files-found: error
+
+  # ── Attach to GitHub Release (tag builds only) ────────────────────────────
+  release:
+    name: Create GitHub Release
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/openRigConsole-macos/*.dmg
+            dist/openRigConsole-windows/*.exe
+          generate_release_notes: true

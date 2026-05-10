@@ -382,9 +382,12 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
   }
 
   void _loadCallsign(String callsign) {
+    _hasPotaLocation = false;
     setState(() {
       _callCtl.text = callsign.toUpperCase();
       _qrzInfo = null;
+      _potaCtl.clear();
+      _potaParkName = null;
     });
     _lookupQrz();
   }
@@ -435,8 +438,11 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
   // ── QRZ ─────────────────────────────────────────────────────────────────
 
   Future<void> _lookupQrz() async {
-    final raw = normalizeCallsign(_callCtl.text);
+    var raw = normalizeCallsign(_callCtl.text);
     if (raw.isEmpty) return;
+    // Strip -SUFFIX (e.g. "W1AW-9" -> "W1AW"), matching web UI baseCall().
+    final dashIdx = raw.indexOf('-');
+    if (dashIdx > 0) raw = raw.substring(0, dashIdx);
     final user = widget.settings.qrzXmlUser;
     final pass = widget.settings.qrzXmlPass;
     if (user.isEmpty || pass.isEmpty) {
