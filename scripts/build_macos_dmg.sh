@@ -73,8 +73,8 @@ hdiutil create \
 
 # ── 4. Mount and configure window appearance ──────────────────────────────────
 echo "==> Configuring DMG window..."
-MOUNT_DIR=$(hdiutil attach -readwrite -noverify -noautoopen "$TMP_DMG" \
-  | awk '/\/Volumes\//{print $NF}')
+MOUNT_DIR="/Volumes/${APP_NAME}"
+hdiutil attach -readwrite -noverify -noautoopen -mountpoint "$MOUNT_DIR" "$TMP_DMG" > /dev/null
 
 # Give Finder a moment to register the volume
 sleep 1
@@ -105,7 +105,7 @@ sync
 
 # ── 5. Detach and convert to compressed read-only DMG ────────────────────────
 echo "==> Converting to compressed DMG..."
-hdiutil detach "$MOUNT_DIR" -quiet
+hdiutil detach "$MOUNT_DIR" -quiet -force
 hdiutil convert "$TMP_DMG" -format UDZO -imagekey zlib-level=9 -o "$DMG_PATH" > /dev/null
 rm -f "$TMP_DMG"
 

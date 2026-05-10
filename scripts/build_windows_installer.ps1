@@ -74,8 +74,10 @@ Write-Host "==> Using Inno Setup: $Iscc"
 
 # ── Compile installer ─────────────────────────────────────────────────────────
 Write-Host "==> Compiling installer..."
+$AbsBuildDir = (Resolve-Path $ReleasDir).Path
 & $Iscc `
     "/DAppVersion=$Version" `
+    "/DBuildDir=$AbsBuildDir" `
     "scripts\installer.iss"
 
 if ($LASTEXITCODE -ne 0) { Write-Error "Inno Setup compilation failed"; exit 1 }

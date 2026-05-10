@@ -14,8 +14,12 @@
   #define AppVersion "0.0.0"
 #endif
 
-; Build output directory (relative to project root, where iscc is invoked from)
-#define BuildDir "build\windows\x64\runner\Release"
+; Build output directory — passed as absolute path from build_windows_installer.ps1
+; via /DBuildDir=<path>. Falls back to a path relative to the project root for
+; local use (iscc invoked from the project root, not the scripts/ directory).
+#ifndef BuildDir
+  #define BuildDir SourcePath + "\..\build\windows\x64\runner\Release"
+#endif
 
 [Setup]
 AppId={{{#AppId}}
