@@ -33,7 +33,7 @@ DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 AllowNoIcons=yes
 ; Installer output
-OutputDir=build
+OutputDir={#SourcePath}\..\build
 OutputBaseFilename=openRigConsole-{#AppVersion}-windows-setup
 ; Compression
 Compression=lzma2/ultra64
