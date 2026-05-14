@@ -45,8 +45,13 @@ class QsoEntryController {
   /// Populate the QSO entry panel from a DX cluster spot and trigger a QRZ lookup.
   void loadSpot(DxSpot spot) => _state?._loadSpot(spot);
 
-  /// Set the callsign field and trigger a QRZ lookup (without changing freq/mode).
-  void loadCallsign(String callsign) => _state?._loadCallsign(callsign);
+  /// Set the callsign field and trigger a QRZ lookup.
+  /// [mode] optionally updates the mode dropdown (e.g. from a last-heard entry).
+  void loadCallsign(String callsign, {String? mode}) =>
+      _state?._loadCallsign(callsign, mode: mode);
+
+  /// Set the frequency (Hz) and auto-update the band dropdown.
+  void setFrequency(int hz) => _state?._setFrequencyFromDevice(hz);
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +110,254 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
 
   int _frequencyHz = 0;
   String _mode = '';
+  String _band = '';
   Timer? _pollTimer;
+
+  static const List<String> _allBands = [
+    '160m', '80m', '60m', '40m', '30m', '20m', '17m', '15m', '12m', '10m',
+    '6m', '2m', '70cm',
+  ];
+
+  /// QRZ Logbook modes — (value, displayLabel). Sub-modes are indented.
+  static const List<(String, String)> _allModes = [
+    ('AM',            'AM'),
+    ('ARDOP',         'ARDOP'),
+    ('ATV',           'ATV'),
+    ('CHIP',          'CHIP'),
+    ('CHIP128',       '  CHIP128'),
+    ('CHIP64',        '  CHIP64'),
+    ('CLO',           'CLO'),
+    ('CONTESTI',      'CONTESTI'),
+    ('CW',            'CW'),
+    ('PCW',           '  PCW'),
+    ('DATA',          'DATA'),
+    ('DIGITALVOICE',  'DIGITALVOICE'),
+    ('C4FM',          '  C4FM'),
+    ('DMR',           '  DMR'),
+    ('DSTAR',         '  DSTAR'),
+    ('FREEDV',        '  FREEDV'),
+    ('M17',           '  M17'),
+    ('DOMINO',        'DOMINO'),
+    ('DOM-M',         '  DOM-M'),
+    ('DOM11',         '  DOM11'),
+    ('DOM16',         '  DOM16'),
+    ('DOM22',         '  DOM22'),
+    ('DOM4',          '  DOM4'),
+    ('DOM44',         '  DOM44'),
+    ('DOM5',          '  DOM5'),
+    ('DOM8',          '  DOM8'),
+    ('DOM88',         '  DOM88'),
+    ('DOMINOEX',      '  DOMINOEX'),
+    ('DOMINOF',       '  DOMINOF'),
+    ('DYNAMIC',       'DYNAMIC'),
+    ('VARA FM 1200',  '  VARA FM 1200'),
+    ('VARA FM 9600',  '  VARA FM 9600'),
+    ('VARA HF',       '  VARA HF'),
+    ('VARA SATELLITE','  VARA SATELLITE'),
+    ('FAX',           'FAX'),
+    ('FM',            'FM'),
+    ('FSK441',        'FSK441'),
+    ('FT8',           'FT8'),
+    ('HELL',          'HELL'),
+    ('FMHELL',        '  FMHELL'),
+    ('FSKH105',       '  FSKH105'),
+    ('FSKH245',       '  FSKH245'),
+    ('FSKHELL',       '  FSKHELL'),
+    ('HELL80',        '  HELL80'),
+    ('HELLX5',        '  HELLX5'),
+    ('HELLX9',        '  HELLX9'),
+    ('HFSK',          '  HFSK'),
+    ('PSKHELL',       '  PSKHELL'),
+    ('SLOWHELL',      '  SLOWHELL'),
+    ('ISCAT',         'ISCAT'),
+    ('ISCAT-A',       '  ISCAT-A'),
+    ('ISCAT-B',       '  ISCAT-B'),
+    ('JT4',           'JT4'),
+    ('JT4A',          '  JT4A'),
+    ('JT4B',          '  JT4B'),
+    ('JT4C',          '  JT4C'),
+    ('JT4D',          '  JT4D'),
+    ('JT4E',          '  JT4E'),
+    ('JT4F',          '  JT4F'),
+    ('JT4G',          '  JT4G'),
+    ('JT44',          'JT44'),
+    ('JT65',          'JT65'),
+    ('JT65A',         '  JT65A'),
+    ('JT65B',         '  JT65B'),
+    ('JT65B2',        '  JT65B2'),
+    ('JT65C',         '  JT65C'),
+    ('JT65C2',        '  JT65C2'),
+    ('JT6M',          'JT6M'),
+    ('JT9',           'JT9'),
+    ('JT9-1',         '  JT9-1'),
+    ('JT9-10',        '  JT9-10'),
+    ('JT9-2',         '  JT9-2'),
+    ('JT9-30',        '  JT9-30'),
+    ('JT9-5',         '  JT9-5'),
+    ('JT9A',          '  JT9A'),
+    ('JT9B',          '  JT9B'),
+    ('JT9C',          '  JT9C'),
+    ('JT9D',          '  JT9D'),
+    ('JT9E',          '  JT9E'),
+    ('JT9E FAST',     '  JT9E FAST'),
+    ('JT9F',          '  JT9F'),
+    ('JT9F FAST',     '  JT9F FAST'),
+    ('JT9G',          '  JT9G'),
+    ('JT9G FAST',     '  JT9G FAST'),
+    ('JT9H',          '  JT9H'),
+    ('JT9H FAST',     '  JT9H FAST'),
+    ('MFSK',          'MFSK'),
+    ('FSQCALL',       '  FSQCALL'),
+    ('FST4',          '  FST4'),
+    ('FST4W',         '  FST4W'),
+    ('FT2',           '  FT2'),
+    ('FT4',           '  FT4'),
+    ('JS8',           '  JS8'),
+    ('JTMS',          '  JTMS'),
+    ('MFSK11',        '  MFSK11'),
+    ('MFSK128',       '  MFSK128'),
+    ('MFSK128L',      '  MFSK128L'),
+    ('MFSK16',        '  MFSK16'),
+    ('MFSK22',        '  MFSK22'),
+    ('MFSK31',        '  MFSK31'),
+    ('MFSK32',        '  MFSK32'),
+    ('MFSK4',         '  MFSK4'),
+    ('MFSK64',        '  MFSK64'),
+    ('MFSK64L',       '  MFSK64L'),
+    ('MFSK8',         '  MFSK8'),
+    ('MM2',           '  MM2'),
+    ('Q65',           '  Q65'),
+    ('MSK144',        'MSK144'),
+    ('MT63',          'MT63'),
+    ('OLIVIA',        'OLIVIA'),
+    ('OLIVIA 16/1000','  OLIVIA 16/1000'),
+    ('OLIVIA 16/500', '  OLIVIA 16/500'),
+    ('OLIVIA 32/1000','  OLIVIA 32/1000'),
+    ('OLIVIA 4/125',  '  OLIVIA 4/125'),
+    ('OLIVIA 4/250',  '  OLIVIA 4/250'),
+    ('OLIVIA 8/250',  '  OLIVIA 8/250'),
+    ('OLIVIA 8/500',  '  OLIVIA 8/500'),
+    ('OPERA',         'OPERA'),
+    ('OPERA-BEACON',  '  OPERA-BEACON'),
+    ('OPERA-QSO',     '  OPERA-QSO'),
+    ('PAC',           'PAC'),
+    ('PAC2',          '  PAC2'),
+    ('PAC3',          '  PAC3'),
+    ('PAC4',          '  PAC4'),
+    ('PAX',           'PAX'),
+    ('PAX2',          '  PAX2'),
+    ('PKT',           'PKT'),
+    ('PSK',           'PSK'),
+    ('8PSK1000',      '  8PSK1000'),
+    ('8PSK1000F',     '  8PSK1000F'),
+    ('8PSK1200F',     '  8PSK1200F'),
+    ('8PSK125',       '  8PSK125'),
+    ('8PSK125F',      '  8PSK125F'),
+    ('8PSK125FL',     '  8PSK125FL'),
+    ('8PSK250',       '  8PSK250'),
+    ('8PSK250F',      '  8PSK250F'),
+    ('8PSK250FL',     '  8PSK250FL'),
+    ('8PSK500',       '  8PSK500'),
+    ('8PSK500F',      '  8PSK500F'),
+    ('FSK31',         '  FSK31'),
+    ('PSK10',         '  PSK10'),
+    ('PSK1000',       '  PSK1000'),
+    ('PSK1000C2',     '  PSK1000C2'),
+    ('PSK1000R',      '  PSK1000R'),
+    ('PSK1000RC2',    '  PSK1000RC2'),
+    ('PSK125',        '  PSK125'),
+    ('PSK125C12',     '  PSK125C12'),
+    ('PSK125R',       '  PSK125R'),
+    ('PSK125RC10',    '  PSK125RC10'),
+    ('PSK125RC12',    '  PSK125RC12'),
+    ('PSK125RC16',    '  PSK125RC16'),
+    ('PSK125RC4',     '  PSK125RC4'),
+    ('PSK125RC5',     '  PSK125RC5'),
+    ('PSK250',        '  PSK250'),
+    ('PSK250C6',      '  PSK250C6'),
+    ('PSK250R',       '  PSK250R'),
+    ('PSK250RC2',     '  PSK250RC2'),
+    ('PSK250RC3',     '  PSK250RC3'),
+    ('PSK250RC5',     '  PSK250RC5'),
+    ('PSK250RC6',     '  PSK250RC6'),
+    ('PSK250RC7',     '  PSK250RC7'),
+    ('PSK31',         '  PSK31'),
+    ('PSK500',        '  PSK500'),
+    ('PSK500C2',      '  PSK500C2'),
+    ('PSK500C4',      '  PSK500C4'),
+    ('PSK500R',       '  PSK500R'),
+    ('PSK500RC2',     '  PSK500RC2'),
+    ('PSK500RC3',     '  PSK500RC3'),
+    ('PSK500RC4',     '  PSK500RC4'),
+    ('PSK63',         '  PSK63'),
+    ('PSK63F',        '  PSK63F'),
+    ('PSK63RC10',     '  PSK63RC10'),
+    ('PSK63RC20',     '  PSK63RC20'),
+    ('PSK63RC32',     '  PSK63RC32'),
+    ('PSK63RC4',      '  PSK63RC4'),
+    ('PSK63RC5',      '  PSK63RC5'),
+    ('PSK800C2',      '  PSK800C2'),
+    ('PSK800RC2',     '  PSK800RC2'),
+    ('PSKAM10',       '  PSKAM10'),
+    ('PSKAM31',       '  PSKAM31'),
+    ('PSKAM50',       '  PSKAM50'),
+    ('PSKFEC31',      '  PSKFEC31'),
+    ('QPSK125',       '  QPSK125'),
+    ('QPSK250',       '  QPSK250'),
+    ('QPSK31',        '  QPSK31'),
+    ('QPSK500',       '  QPSK500'),
+    ('QPSK63',        '  QPSK63'),
+    ('SIM31',         '  SIM31'),
+    ('PSK2K',         'PSK2K'),
+    ('Q15',           'Q15'),
+    ('QRA64',         'QRA64'),
+    ('QRA64A',        '  QRA64A'),
+    ('QRA64B',        '  QRA64B'),
+    ('QRA64C',        '  QRA64C'),
+    ('QRA64D',        '  QRA64D'),
+    ('QRA64E',        '  QRA64E'),
+    ('ROS',           'ROS'),
+    ('ROS-EME',       '  ROS-EME'),
+    ('ROS-HF',        '  ROS-HF'),
+    ('ROS-MF',        '  ROS-MF'),
+    ('RTTY',          'RTTY'),
+    ('ASCI',          '  ASCI'),
+    ('RTTYM',         'RTTYM'),
+    ('SSB',           'SSB'),
+    ('LSB',           '  LSB'),
+    ('USB',           '  USB'),
+    ('SSTV',          'SSTV'),
+    ('T10',           'T10'),
+    ('THOR',          'THOR'),
+    ('THOR-M',        '  THOR-M'),
+    ('THOR100',       '  THOR100'),
+    ('THOR11',        '  THOR11'),
+    ('THOR16',        '  THOR16'),
+    ('THOR22',        '  THOR22'),
+    ('THOR25X4',      '  THOR25X4'),
+    ('THOR4',         '  THOR4'),
+    ('THOR5',         '  THOR5'),
+    ('THOR50X1',      '  THOR50X1'),
+    ('THOR50X2',      '  THOR50X2'),
+    ('THOR8',         '  THOR8'),
+    ('THRB',          'THRB'),
+    ('THRBX',         '  THRBX'),
+    ('THRBX1',        '  THRBX1'),
+    ('THRBX2',        '  THRBX2'),
+    ('THRBX4',        '  THRBX4'),
+    ('THROB1',        '  THROB1'),
+    ('THROB2',        '  THROB2'),
+    ('THROB4',        '  THROB4'),
+    ('TOR',           'TOR'),
+    ('AMTORFEC',      '  AMTORFEC'),
+    ('GTOR',          '  GTOR'),
+    ('NAVTEX',        '  NAVTEX'),
+    ('SITORB',        '  SITORB'),
+    ('V4',            'V4'),
+    ('VOI',           'VOI'),
+    ('WINMOR',        'WINMOR'),
+    ('WSPR',          'WSPR'),
+  ];
 
   // ── QRZ inline data ─────────────────────────────────────────────────────
   CallsignInfo? _qrzInfo;
@@ -262,6 +514,7 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
     setState(() {
       _selectedSource = source;
       _frequencyHz = 0;
+      _band = '';
       _mode = '';
     });
 
@@ -285,7 +538,8 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
     try {
       final config = await client.getHotspot();
       if (mounted && config.rfFrequencyMhz > 0) {
-        setState(() => _frequencyHz = (config.rfFrequencyMhz * 1e6).round());
+        final hz = (config.rfFrequencyMhz * 1e6).round();
+        setState(() { _frequencyHz = hz; _band = _freqToBand(hz / 1e6); });
       }
     } catch (_) {}
   }
@@ -307,7 +561,7 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
       if (!client.isConnected) return;
       final freq = await client.getFrequency();
       final modeResult = await client.getMode();
-      if (mounted) setState(() { _frequencyHz = freq; _mode = modeResult.mode; });
+      if (mounted) setState(() { _frequencyHz = freq; _band = _freqToBand(freq / 1e6); _mode = modeResult.mode; });
     } catch (_) {
     } finally {
       _polling = false;
@@ -345,6 +599,14 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
 
   // ── Spot loading ─────────────────────────────────────────────────────────
 
+  void _setFrequencyFromDevice(int hz) {
+    if (!mounted) return;
+    setState(() {
+      _frequencyHz = hz;
+      _band = _freqToBand(hz / 1e6);
+    });
+  }
+
   void _loadSpot(DxSpot spot) {
     final hz = (spot.frequencyKhz * 1000).round();
     final mode = _modeFromSpot(spot);
@@ -357,6 +619,7 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
     _hasPotaLocation = spot.parkRef != null;
     setState(() {
       _callCtl.text = spot.dxCall;
+      _band = _freqToBand(hz / 1e6);
       if (mode != null) _mode = mode;
       _qrzInfo = null;
       _potaParkName = null;
@@ -381,13 +644,14 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
     if (spot.parkRef != null) _lookupPotaPark(spot.parkRef!);
   }
 
-  void _loadCallsign(String callsign) {
+  void _loadCallsign(String callsign, {String? mode}) {
     _hasPotaLocation = false;
     setState(() {
       _callCtl.text = callsign.toUpperCase();
       _qrzInfo = null;
       _potaCtl.clear();
       _potaParkName = null;
+      if (mode != null) _mode = _mapHotspotMode(mode);
     });
     _lookupQrz();
   }
@@ -490,7 +754,7 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
       // Compute map location before setState so we can fire the callback
       // after the build cycle rather than from inside the setState closure.
       double? mapLat, mapLon;
-      if (info!.grid.isNotEmpty && !_hasPotaLocation) {
+      if (info.grid.isNotEmpty && !_hasPotaLocation) {
         final loc = gridToLatLon(info.grid);
         if (loc != null) { mapLat = loc.lat; mapLon = loc.lon; }
       }
@@ -530,6 +794,162 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
   Future<void> _openQrzPage(String callsign) async {
     final uri = Uri.parse('https://www.qrz.com/db/${callsign.toUpperCase()}');
     await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  void _showQrzCard(String callsign) {
+    final info = _qrzInfo;
+    final dxcc = info != null ? lookupDxccOrNull(callsign.toUpperCase()) : null;
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.grey.shade900,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: Colors.grey.shade700),
+        ),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360, maxHeight: 560),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade800,
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                ),
+                child: Row(
+                  children: [
+                    Text(
+                      callsign.toUpperCase(),
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'monospace',
+                        letterSpacing: 1.5,
+                      ),
+                    ),
+                    if (info?.licenseClass.isNotEmpty == true) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.green.shade800,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          info!.licenseClass,
+                          style: const TextStyle(fontSize: 10, color: Colors.white),
+                        ),
+                      ),
+                    ],
+                    const Spacer(),
+                    IconButton(
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      icon: const Icon(Icons.close, size: 18),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                ),
+              ),
+              // Body
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (info != null) ...[
+                        Center(child: _buildContactImage(info)),
+                        const SizedBox(height: 12),
+                        if (info.fullName.isNotEmpty)
+                          _qrzCardRow(Icons.person, info.fullName),
+                        if (info.address.isNotEmpty || info.city.isNotEmpty)
+                          _qrzCardRow(Icons.location_on, [
+                            info.address,
+                            info.city,
+                            info.county,
+                            info.state,
+                            info.country,
+                          ].where((s) => s.isNotEmpty).join(', ')),
+                        if (info.grid.isNotEmpty)
+                          _qrzCardRow(Icons.grid_on, info.grid),
+                        if (info.cqZone.isNotEmpty || info.ituZone.isNotEmpty)
+                          _qrzCardRow(
+                            Icons.public,
+                            [
+                              if (info.cqZone.isNotEmpty) 'CQ ${info.cqZone}',
+                              if (info.ituZone.isNotEmpty) 'ITU ${info.ituZone}',
+                              if (dxcc != null) dxcc,
+                            ].join('  ·  '),
+                          ),
+                        if (info.iota.isNotEmpty)
+                          _qrzCardRow(Icons.anchor, 'IOTA ${info.iota}'),
+                        if (info.email.isNotEmpty)
+                          _qrzCardRow(Icons.email, info.email),
+                        if (info.qslMgr.isNotEmpty)
+                          _qrzCardRow(Icons.mail, 'QSL via ${info.qslMgr}'),
+                      ] else
+                        Center(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            child: Text(
+                              'No QRZ data loaded.\nEnter callsign and press lookup first.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: Colors.grey.shade500),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              // Footer
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                decoration: BoxDecoration(
+                  border: Border(top: BorderSide(color: Colors.grey.shade800)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton.icon(
+                      onPressed: () => _openQrzPage(callsign),
+                      icon: const Icon(Icons.open_in_new, size: 14),
+                      label: const Text('Open on QRZ.com'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.blue.shade400,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _qrzCardRow(IconData icon, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 14, color: Colors.grey.shade500),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   // ── QSO actions ──────────────────────────────────────────────────────────
@@ -574,7 +994,7 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
     final freqMhz = _frequencyHz / 1e6;
     final record = QsoRecord(
       call: call,
-      band: _freqToBand(freqMhz),
+      band: _band.isNotEmpty ? _band : _freqToBand(freqMhz),
       mode: _mode.isNotEmpty ? _mode : 'SSB',
       freqMhz: freqMhz,
       timeOn: _timeOn ?? DateTime.now().toUtc(),
@@ -583,12 +1003,25 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
       rstRcvd: _rstRcvdCtl.text.trim(),
       name: _qrzInfo?.fullName.isNotEmpty == true ? _qrzInfo!.fullName : null,
       comment: _notesCtl.text.trim().isNotEmpty ? _notesCtl.text.trim() : null,
-      sotaRef: _sotaCtl.text.trim().isEmpty ? null : _sotaCtl.text.trim(),
-      potaRef: _potaCtl.text.trim().isEmpty ? null : _potaCtl.text.trim(),
+      gridsquare: _gridCtl.text.trim().isNotEmpty ? _gridCtl.text.trim() : null,
+      sotaRef: _sotaCtl.text.trim().isNotEmpty ? _sotaCtl.text.trim() : null,
+      potaRef: _potaCtl.text.trim().isNotEmpty ? _potaCtl.text.trim() : null,
       extra: {
         if (_qrzInfo?.city.isNotEmpty == true) 'QTH': _qrzInfo!.city,
         if (_qrzInfo?.state.isNotEmpty == true) 'STATE': _qrzInfo!.state,
         if (_qrzInfo?.country.isNotEmpty == true) 'COUNTRY': _qrzInfo!.country,
+        if (_powerCtl.text.trim().isNotEmpty) 'TX_PWR': _powerCtl.text.trim(),
+        if (_locatorCtl.text.trim().isNotEmpty) 'MY_GRIDSQUARE': _locatorCtl.text.trim(),
+        if (_cqCtl.text.trim().isNotEmpty) 'CQZ': _cqCtl.text.trim(),
+        if (_ituCtl.text.trim().isNotEmpty) 'ITU_ZONE': _ituCtl.text.trim(),
+        if (_iotaCtl.text.trim().isNotEmpty) 'IOTA': _iotaCtl.text.trim(),
+        if (_dxccCtl.text.trim().isNotEmpty) 'DXCC': _dxccCtl.text.trim(),
+        if (_wwffCtl.text.trim().isNotEmpty) 'WWFF_REF': _wwffCtl.text.trim(),
+        if (_skccCtl.text.trim().isNotEmpty) 'SKCC': _skccCtl.text.trim(),
+        if (_qslViaCtl.text.trim().isNotEmpty) 'QSL_VIA': _qslViaCtl.text.trim(),
+        if (_tentenCtl.text.trim().isNotEmpty) 'TEN_TEN': _tentenCtl.text.trim(),
+        if (_urlCtl.text.trim().isNotEmpty) 'URL': _urlCtl.text.trim(),
+        if (_dxDeCtl.text.trim().isNotEmpty) 'DE': _dxDeCtl.text.trim(),
       },
     );
 
@@ -639,6 +1072,7 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
     if (mhz >= 28.0 && mhz < 29.7) return '10m';
     if (mhz >= 50.0 && mhz < 54.0) return '6m';
     if (mhz >= 144.0 && mhz < 148.0) return '2m';
+    if (mhz >= 420.0 && mhz < 450.0) return '70cm';
     return '';
   }
 
@@ -666,7 +1100,7 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
   (String, Color)? _dupeInfo() {
     final call = _callCtl.text.trim().toUpperCase();
     if (call.isEmpty || _dupeChecker == null) return null;
-    final band = _freqToBand(_frequencyHz / 1e6);
+    final band = _band.isNotEmpty ? _band : _freqToBand(_frequencyHz / 1e6);
     final mode = _mode.isNotEmpty ? _mode : 'SSB';
     if (_dupeChecker!.isWorkedOnBandMode(call, band, mode)) {
       return ('DUPE', Colors.red.shade400);
@@ -685,7 +1119,6 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
   @override
   Widget build(BuildContext context) {
     final sources = _buildSources();
-    final band = _freqToBand(_frequencyHz / 1e6);
     final timeDisplay = _formatDateTimeUtc(_timeOn ?? _nowUtc);
     final dupe = _dupeInfo();
 
@@ -759,8 +1192,8 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
               // ── RIGHT: QSO data panel ─────────────────────────────────
               Expanded(
                 child: _qsoTab == 0
-                    ? _buildDxPanel(timeDisplay, band, dupe)
-                    : _buildContestPanel(timeDisplay, band),
+                    ? _buildDxPanel(timeDisplay, dupe)
+                    : _buildContestPanel(timeDisplay),
               ),
             ],
           ),
@@ -893,8 +1326,8 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
                             fontWeight: FontWeight.bold)),
                   const Spacer(),
                   GestureDetector(
-                    onTap: () => _openQrzPage(callText),
-                    child: Text('QRZ ↗',
+                    onTap: () => _showQrzCard(callText),
+                    child: Text('Details',
                         style: TextStyle(
                           fontSize: 10,
                           color: Colors.blue.shade400,
@@ -967,7 +1400,7 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
 
   // ── DX panel (right) ─────────────────────────────────────────────────────
 
-  Widget _buildDxPanel(String timeDisplay, String band, (String, Color)? dupe) {
+  Widget _buildDxPanel(String timeDisplay, (String, Color)? dupe) {
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
       child: Column(
@@ -1046,22 +1479,12 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
                           fontWeight: FontWeight.bold,
                           fontFamily: 'monospace')),
                 ),
-                const SizedBox(width: 8),
-                Text(band.isNotEmpty ? band : '—',
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.amber.shade400)),
+                const SizedBox(width: 4),
+                _bandDropdown(),
               ],
             ),
             l2: 'Mode',
-            c2: Text(_mode.isNotEmpty ? _mode : '--',
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    fontFamily: 'monospace')),
+            c2: _modeDropdown(),
           ),
           _sectionDivider(),
           // ── Signal ────────────────────────────────────────────────────
@@ -1131,7 +1554,7 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
 
   // ── Contest panel (placeholder) ───────────────────────────────────────────
 
-  Widget _buildContestPanel(String timeDisplay, String band) {
+  Widget _buildContestPanel(String timeDisplay) {
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
       child: Column(
@@ -1150,13 +1573,11 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
                 style: const TextStyle(
                     fontSize: 12, fontWeight: FontWeight.bold,
                     fontFamily: 'monospace')),
-            const SizedBox(width: 8),
-            Text(band.isNotEmpty ? band : '—',
-                style: TextStyle(fontSize: 12, color: Colors.amber.shade400)),
-            const SizedBox(width: 16),
+            const SizedBox(width: 4),
+            _bandDropdown(),
+            const SizedBox(width: 12),
             _qsoLabel('Mode'),
-            Text(_mode.isNotEmpty ? _mode : '--',
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+            _modeDropdown(),
           ]),
           _qsoRow([
             _qsoLabel('RSTS'),
@@ -1169,6 +1590,58 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
           Text('Contest exchange fields coming soon.',
               style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
         ],
+      ),
+    );
+  }
+
+  // ── Mode / Band dropdowns ────────────────────────────────────────────────
+
+  Widget _modeDropdown() {
+    return DropdownButtonHideUnderline(
+      child: DropdownButton<String>(
+        value: _allModes.any((e) => e.$1 == _mode) ? _mode : null,
+        isDense: true,
+        hint: Text('--',
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade500)),
+        style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            fontFamily: 'monospace'),
+        items: [
+          for (final (value, label) in _allModes)
+            DropdownMenuItem(value: value, child: Text(label)),
+        ],
+        onChanged: (m) {
+          if (m != null) setState(() => _mode = m);
+        },
+      ),
+    );
+  }
+
+  Widget _bandDropdown() {
+    return DropdownButtonHideUnderline(
+      child: DropdownButton<String>(
+        value: _band.isNotEmpty ? _band : null,
+        isDense: true,
+        hint: Text('—',
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.amber.shade400)),
+        style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: Colors.amber.shade400),
+        items: [
+          for (final b in _allBands)
+            DropdownMenuItem(value: b, child: Text(b)),
+        ],
+        onChanged: (b) {
+          if (b != null) setState(() => _band = b);
+        },
       ),
     );
   }

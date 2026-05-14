@@ -431,7 +431,8 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
     if (widget.tabController?.index == 3 &&
         _lastHeard.isNotEmpty &&
         widget.qsoController != null) {
-      widget.qsoController!.loadCallsign(_lastHeard.first.callsign);
+      widget.qsoController!.loadCallsign(_lastHeard.first.callsign,
+          mode: _lastHeard.first.mode);
     }
   }
 
@@ -491,6 +492,10 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
         _loading = false;
         if (hotspot != null) _populateHotspotFields(hotspot);
       });
+      if (hotspot != null && hotspot.rfFrequencyMhz > 0) {
+        widget.qsoController?.setFrequency(
+            (hotspot.rfFrequencyMhz * 1e6).round());
+      }
 
       // Start hotspot live features for hotspot devices.
       if (status.type == 'hotspot') {
@@ -521,8 +526,13 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
       (_) => _refreshYsfState(),
     );
 
-    // Start last-heard stream.
+    _startLastHeardStream();
+  }
+
+  void _startLastHeardStream() {
+    _lastHeardSub?.cancel();
     _lastHeard.clear();
+    if (_hotspotClient == null) return;
     _lastHeardSub = _hotspotClient!.streamLastHeard().listen(
       (entry) {
         if (!mounted) return;
@@ -547,10 +557,15 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
         // don't clobber whatever the user is looking at on another tab.
         if (isNewTransmission &&
             (widget.tabController == null || widget.tabController!.index == 3)) {
-          widget.qsoController?.loadCallsign(entry.callsign);
+          widget.qsoController?.loadCallsign(entry.callsign, mode: entry.mode);
         }
       },
     );
+  }
+
+  void _refreshLastHeard() {
+    if (_hotspotClient == null) return;
+    setState(_startLastHeardStream);
   }
 
   Future<void> _refreshYsfState() async {
@@ -560,7 +575,16 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
       if (mounted) {
         setState(() {
           _ysfState = HotspotYsfState.fromJson(raw);
-          _reflectorCtl.text = _ysfState!.reflector;
+          final liveReflector = _ysfState!.reflector;
+          if (liveReflector.isNotEmpty) {
+            _reflectorCtl.text = liveReflector;
+            widget.settings.setLastYsfReflector(
+                widget.device.host, liveReflector);
+          } else {
+            // Unlinked — restore last-used reflector so the combo isn't blanked.
+            final last = widget.settings.lastYsfReflector(widget.device.host);
+            if (last.isNotEmpty) _reflectorCtl.text = last;
+          }
         });
       }
     } catch (_) {}
@@ -582,6 +606,7 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
     setState(() => _linking = true);
     try {
       await _hotspotClient!.linkYsf(reflector);
+      widget.settings.setLastYsfReflector(widget.device.host, reflector);
       await Future.delayed(const Duration(milliseconds: 800));
       await _refreshYsfState();
       if (mounted) {
@@ -1170,6 +1195,16 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
                       _SectionCard(
                         title: 'Last Heard',
                         icon: Icons.hearing,
+                        trailing: IconButton(
+                          onPressed: _refreshLastHeard,
+                          icon: Icon(Icons.refresh,
+                              size: 16, color: Colors.grey.shade400),
+                          visualDensity: VisualDensity.compact,
+                          tooltip: 'Refresh',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                              minWidth: 28, minHeight: 28),
+                        ),
                         children: [
                           if (_lastHeard.isEmpty)
                             Padding(
@@ -1183,8 +1218,8 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
                             _LastHeardTable(
                               entries: _lastHeard,
                               onCallsignTap: widget.qsoController != null
-                                  ? (c) =>
-                                      widget.qsoController!.loadCallsign(c)
+                                  ? (c, m) => widget.qsoController!
+                                      .loadCallsign(c, mode: m)
                                   : null,
                             ),
                         ],
@@ -1633,7 +1668,7 @@ class _YsfLinkBadge extends StatelessWidget {
 
 class _LastHeardTable extends StatefulWidget {
   final List<HotspotLastHeardEntry> entries;
-  final void Function(String callsign)? onCallsignTap;
+  final void Function(String callsign, String mode)? onCallsignTap;
   const _LastHeardTable({required this.entries, this.onCallsignTap});
 
   @override
@@ -1707,7 +1742,7 @@ class _LastHeardTableState extends State<_LastHeardTable> {
                   padding: const EdgeInsets.fromLTRB(0, 6, 12, 2),
                   child: GestureDetector(
                     onTap: widget.onCallsignTap != null
-                        ? () => widget.onCallsignTap!(e.callsign)
+                        ? () => widget.onCallsignTap!(e.callsign, e.mode)
                         : null,
                     child: Text(
                       e.callsign,

@@ -30,6 +30,7 @@ class SettingsService {
   static const _keyLayoutMapWidth  = 'layout_map_width';
   static const _keyLayoutStatsWidth = 'layout_stats_width';
   static const _keyLayoutDevicesListWidth = 'layout_devices_list_width';
+  static const _keyLastYsfReflectorPrefix = 'last_ysf_reflector_';
 
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
@@ -118,6 +119,17 @@ class SettingsService {
   Future<void> setLayoutMapWidth(double v)  async => _prefs.setDouble(_keyLayoutMapWidth, v);
   Future<void> setLayoutStatsWidth(double v) async => _prefs.setDouble(_keyLayoutStatsWidth, v);
   Future<void> setLayoutDevicesListWidth(double v) async => _prefs.setDouble(_keyLayoutDevicesListWidth, v);
+
+  // -- Last YSF reflector per device host --
+
+  String lastYsfReflector(String host) =>
+      _prefs.getString('$_keyLastYsfReflectorPrefix$host') ?? '';
+
+  Future<void> setLastYsfReflector(String host, String reflector) async {
+    if (reflector.isNotEmpty) {
+      await _prefs.setString('$_keyLastYsfReflectorPrefix$host', reflector);
+    }
+  }
 
   // -- Log file path --
 

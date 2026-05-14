@@ -31,19 +31,30 @@ class _RigPanelState extends State<RigPanel> {
   bool _pttActive = false;
   Timer? _pollTimer;
   bool _polling = false;
+  late Timer _clockTimer;
+  DateTime _nowUtc = DateTime.now().toUtc();
 
   ConnectionService get _cs => widget.connectionService;
   RigManager get _rm => _cs.rigManager;
+
+  static String _formatUtc(DateTime dt) =>
+      '${dt.hour.toString().padLeft(2, '0')}:'
+      '${dt.minute.toString().padLeft(2, '0')}:'
+      '${dt.second.toString().padLeft(2, '0')}';
 
   @override
   void initState() {
     super.initState();
     _cs.addListener(_onChanged);
     if (_cs.connected) _startPolling();
+    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() => _nowUtc = DateTime.now().toUtc());
+    });
   }
 
   @override
   void dispose() {
+    _clockTimer.cancel();
     _pollTimer?.cancel();
     _cs.removeListener(_onChanged);
     super.dispose();
@@ -154,6 +165,40 @@ class _RigPanelState extends State<RigPanel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          // UTC clock card
+          Card(
+            color: Colors.grey.shade900,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+              side: BorderSide(color: Colors.grey.shade700),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+              child: Column(
+                children: [
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      _formatUtc(_nowUtc),
+                      style: const TextStyle(
+                        fontSize: 39,
+                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.w300,
+                        color: Colors.white,
+                        letterSpacing: 2,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    'UTC',
+                    style: TextStyle(fontSize: 10, color: Colors.grey.shade300),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
           // Rig selector row
           Row(
             children: [

@@ -377,6 +377,146 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
+  void _showQrzCard(QsoRecord q) {
+    final name     = q.name ?? '';
+    final qth      = q.extra['QTH'] ?? '';
+    final state    = q.extra['STATE'] ?? '';
+    final country  = q.extra['COUNTRY'] ?? '';
+    final grid     = q.gridsquare ?? '';
+    final cqZone   = q.extra['CQZ'] ?? '';
+    final ituZone  = q.extra['ITU_ZONE'] ?? '';
+    final dxcc     = q.extra['DXCC'] ?? '';
+    final iota     = q.extra['IOTA'] ?? '';
+    final qslVia   = q.extra['QSL_VIA'] ?? '';
+
+    final hasData = [name, qth, state, country, grid, cqZone, ituZone, dxcc]
+        .any((s) => s.isNotEmpty);
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.grey.shade900,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: Colors.grey.shade700),
+        ),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360, maxHeight: 480),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade800,
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                ),
+                child: Row(
+                  children: [
+                    Text(
+                      q.call.toUpperCase(),
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'monospace',
+                        letterSpacing: 1.5,
+                      ),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      icon: const Icon(Icons.close, size: 18),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                ),
+              ),
+              // Body
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (!hasData)
+                        Center(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            child: Text(
+                              'No contact data saved for this QSO.\nUse "Update from QRZ" to fetch it.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: Colors.grey.shade500),
+                            ),
+                          ),
+                        )
+                      else ...[
+                        if (name.isNotEmpty)
+                          _qrzCardRow(Icons.person, name),
+                        if (qth.isNotEmpty || state.isNotEmpty || country.isNotEmpty)
+                          _qrzCardRow(Icons.location_on,
+                            [qth, state, country].where((s) => s.isNotEmpty).join(', ')),
+                        if (grid.isNotEmpty)
+                          _qrzCardRow(Icons.grid_on, grid),
+                        if (cqZone.isNotEmpty || ituZone.isNotEmpty || dxcc.isNotEmpty)
+                          _qrzCardRow(Icons.public, [
+                            if (cqZone.isNotEmpty)  'CQ $cqZone',
+                            if (ituZone.isNotEmpty) 'ITU $ituZone',
+                            if (dxcc.isNotEmpty)    dxcc,
+                          ].join('  ·  ')),
+                        if (iota.isNotEmpty)
+                          _qrzCardRow(Icons.anchor, 'IOTA $iota'),
+                        if (qslVia.isNotEmpty)
+                          _qrzCardRow(Icons.mail, 'QSL via $qslVia'),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              // Footer
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                decoration: BoxDecoration(
+                  border: Border(top: BorderSide(color: Colors.grey.shade800)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton.icon(
+                      onPressed: () => launchUrl(
+                        Uri.parse('https://www.qrz.com/db/${q.call}'),
+                        mode: LaunchMode.externalApplication,
+                      ),
+                      icon: const Icon(Icons.open_in_new, size: 14),
+                      label: const Text('Open on QRZ.com'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.blue.shade400,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _qrzCardRow(IconData icon, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 14, color: Colors.grey.shade500),
+          const SizedBox(width: 8),
+          Expanded(child: Text(text, style: const TextStyle(fontSize: 13))),
+        ],
+      ),
+    );
+  }
+
   void _showRowMenu(BuildContext context, Offset position,
       int recordIdx, QsoRecord q) async {
     final result = await showMenu<_RowAction>(
@@ -403,9 +543,9 @@ class _LogScreenState extends State<LogScreen> {
         const PopupMenuItem(
           value: _RowAction.openQrzPage,
           child: Row(children: [
-            Icon(Icons.open_in_browser, size: 16),
+            Icon(Icons.contact_page, size: 16),
             SizedBox(width: 8),
-            Text('Open QRZ Page'),
+            Text('Details'),
           ]),
         ),
         const PopupMenuDivider(),
@@ -426,10 +566,7 @@ class _LogScreenState extends State<LogScreen> {
       case _RowAction.qrzLookup:
         _qrzLookup(recordIdx, q);
       case _RowAction.openQrzPage:
-        launchUrl(
-          Uri.parse('https://www.qrz.com/db/${q.call}'),
-          mode: LaunchMode.externalApplication,
-        );
+        _showQrzCard(q);
       case _RowAction.delete:
         _deleteQso(recordIdx, q);
       case null:
@@ -465,112 +602,386 @@ class _LogScreenState extends State<LogScreen> {
   }
 
   Future<void> _editQso(int index, QsoRecord q) async {
-    final callCtl   = TextEditingController(text: q.call);
-    final freqCtl   = TextEditingController(text: q.freqMhz.toStringAsFixed(6));
-    final modeCtl   = TextEditingController(text: q.mode);
-    final rstSCtl   = TextEditingController(text: q.rstSent ?? '');
-    final rstRCtl   = TextEditingController(text: q.rstRcvd ?? '');
-    final nameCtl   = TextEditingController(text: q.name ?? '');
-    final cityCtl   = TextEditingController(text: q.extra['QTH'] ?? '');
-    final stateCtl  = TextEditingController(text: q.extra['STATE'] ?? '');
-    final countryCtl= TextEditingController(text: q.extra['COUNTRY'] ?? '');
-    final commentCtl= TextEditingController(text: q.comment ?? '');
+    final callCtl    = TextEditingController(text: q.call);
+    final timeOnCtl  = TextEditingController(text: _fmtUtc(q.timeOn));
+    final timeOffCtl = TextEditingController(
+        text: q.timeOff != null ? _fmtUtc(q.timeOff!) : '');
+    final freqCtl    = TextEditingController(
+        text: q.freqMhz > 0 ? q.freqMhz.toStringAsFixed(6) : '');
+    final rstSCtl    = TextEditingController(text: q.rstSent ?? '');
+    final rstRCtl    = TextEditingController(text: q.rstRcvd ?? '');
+    final powerCtl   = TextEditingController(text: q.extra['TX_PWR'] ?? '');
+    final nameCtl    = TextEditingController(text: q.name ?? '');
+    final gridCtl    = TextEditingController(text: q.gridsquare ?? '');
+    final locatorCtl = TextEditingController(
+        text: q.extra['MY_GRIDSQUARE'] ?? '');
+    final cqCtl      = TextEditingController(text: q.extra['CQZ'] ?? '');
+    final ituCtl     = TextEditingController(text: q.extra['ITU_ZONE'] ?? '');
+    final iotaCtl    = TextEditingController(text: q.extra['IOTA'] ?? '');
+    final dxccCtl    = TextEditingController(text: q.extra['DXCC'] ?? '');
+    final sotaCtl    = TextEditingController(text: q.sotaRef ?? '');
+    final potaCtl    = TextEditingController(text: q.potaRef ?? '');
+    final wwffCtl    = TextEditingController(text: q.extra['WWFF_REF'] ?? '');
+    final skccCtl    = TextEditingController(text: q.extra['SKCC'] ?? '');
+    final qslViaCtl  = TextEditingController(text: q.extra['QSL_VIA'] ?? '');
+    final tentenCtl  = TextEditingController(text: q.extra['TEN_TEN'] ?? '');
+    final urlCtl     = TextEditingController(text: q.extra['URL'] ?? '');
+    final dxDeCtl    = TextEditingController(text: q.extra['DE'] ?? '');
+    final cityCtl    = TextEditingController(text: q.extra['QTH'] ?? '');
+    final stateCtl   = TextEditingController(text: q.extra['STATE'] ?? '');
+    final countryCtl = TextEditingController(text: q.extra['COUNTRY'] ?? '');
+    final commentCtl = TextEditingController(text: q.comment ?? '');
+
+    final allCtls = [
+      callCtl, timeOnCtl, timeOffCtl, freqCtl,
+      rstSCtl, rstRCtl, powerCtl, nameCtl, gridCtl, locatorCtl,
+      cqCtl, ituCtl, iotaCtl, dxccCtl, sotaCtl, potaCtl,
+      wwffCtl, skccCtl, qslViaCtl, tentenCtl, urlCtl, dxDeCtl,
+      cityCtl, stateCtl, countryCtl, commentCtl,
+    ];
+
+    var dlgBand = q.band;
+    var dlgMode = q.mode;
 
     final saved = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Edit QSO — ${q.call}'),
-        content: SizedBox(
-          width: 420,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _editField(callCtl, 'Callsign',
-                    caps: TextCapitalization.characters),
-                const SizedBox(height: 8),
-                Row(children: [
-                  Expanded(child: _editField(freqCtl, 'Freq (MHz)',
-                      keyboard: TextInputType.number)),
-                  const SizedBox(width: 8),
-                  Expanded(child: _editField(modeCtl, 'Mode',
-                      caps: TextCapitalization.characters)),
-                ]),
-                const SizedBox(height: 8),
-                Row(children: [
-                  Expanded(child: _editField(rstSCtl, 'RST Sent')),
-                  const SizedBox(width: 8),
-                  Expanded(child: _editField(rstRCtl, 'RST Rcvd')),
-                ]),
-                const SizedBox(height: 8),
-                _editField(nameCtl, 'Name'),
-                const SizedBox(height: 8),
-                Row(children: [
-                  Expanded(flex: 2, child: _editField(cityCtl, 'City')),
-                  const SizedBox(width: 8),
-                  Expanded(child: _editField(stateCtl, 'State',
-                      caps: TextCapitalization.characters)),
-                ]),
-                const SizedBox(height: 8),
-                _editField(countryCtl, 'Country'),
-                const SizedBox(height: 8),
-                _editField(commentCtl, 'Comments', maxLines: 3),
+      builder: (ctx) {
+        var freqListenerAdded = false;
+        return StatefulBuilder(
+          builder: (ctx, setDs) {
+            if (!freqListenerAdded) {
+              freqListenerAdded = true;
+              freqCtl.addListener(() {
+                final mhz = double.tryParse(freqCtl.text.trim()) ?? 0;
+                final computed = _freqToBand(mhz);
+                if (computed.isNotEmpty && computed != dlgBand) {
+                  setDs(() => dlgBand = computed);
+                }
+              });
+            }
+
+            Widget row2(Widget a, Widget b) => Row(children: [
+              Expanded(child: a),
+              const SizedBox(width: 8),
+              Expanded(child: b),
+            ]);
+
+            return AlertDialog(
+              title: Text('Edit QSO — ${q.call}'),
+              content: SizedBox(
+                width: 520,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _editField(callCtl, 'Callsign',
+                          caps: TextCapitalization.characters),
+                      _editSectionLabel('Timing'),
+                      row2(
+                        _editField(timeOnCtl, 'Time On (UTC)'),
+                        _editField(timeOffCtl, 'Time Off (UTC)'),
+                      ),
+                      _editSectionLabel('Frequency'),
+                      Row(children: [
+                        Expanded(
+                            flex: 2,
+                            child: _editField(freqCtl, 'Freq (MHz)',
+                                keyboard: TextInputType.number)),
+                        const SizedBox(width: 8),
+                        Expanded(
+                            child: _bandDropdownField(
+                                dlgBand, (b) => setDs(() => dlgBand = b))),
+                        const SizedBox(width: 8),
+                        Expanded(
+                            child: _modeDropdownField(
+                                dlgMode, (m) => setDs(() => dlgMode = m))),
+                      ]),
+                      _editSectionLabel('Signal'),
+                      Row(children: [
+                        Expanded(child: _editField(rstSCtl, 'RST Sent')),
+                        const SizedBox(width: 8),
+                        Expanded(child: _editField(rstRCtl, 'RST Rcvd')),
+                        const SizedBox(width: 8),
+                        Expanded(child: _editField(powerCtl, 'Power (W)',
+                            keyboard: TextInputType.number)),
+                      ]),
+                      _editSectionLabel('Location'),
+                      row2(
+                        _editField(gridCtl, 'Grid',
+                            caps: TextCapitalization.characters),
+                        _editField(locatorCtl, 'Locator',
+                            caps: TextCapitalization.characters),
+                      ),
+                      const SizedBox(height: 8),
+                      row2(
+                        _editField(cqCtl, 'CQ Zone',
+                            keyboard: TextInputType.number),
+                        _editField(ituCtl, 'ITU Zone',
+                            keyboard: TextInputType.number),
+                      ),
+                      const SizedBox(height: 8),
+                      row2(
+                        _editField(iotaCtl, 'IOTA',
+                            caps: TextCapitalization.characters),
+                        _editField(dxccCtl, 'DXCC'),
+                      ),
+                      _editSectionLabel('Awards / References'),
+                      row2(
+                        _editField(sotaCtl, 'SOTA Ref',
+                            caps: TextCapitalization.characters),
+                        _editField(potaCtl, 'POTA Ref',
+                            caps: TextCapitalization.characters),
+                      ),
+                      const SizedBox(height: 8),
+                      row2(
+                        _editField(wwffCtl, 'WWFF Ref',
+                            caps: TextCapitalization.characters),
+                        _editField(skccCtl, 'SKCC'),
+                      ),
+                      _editSectionLabel('Exchange / Info'),
+                      row2(
+                        _editField(qslViaCtl, 'QSL Via'),
+                        _editField(tentenCtl, '10/10'),
+                      ),
+                      const SizedBox(height: 8),
+                      row2(
+                        _editField(urlCtl, 'URL'),
+                        _editField(dxDeCtl, 'DX de',
+                            caps: TextCapitalization.characters),
+                      ),
+                      _editSectionLabel('Contact'),
+                      _editField(nameCtl, 'Name'),
+                      const SizedBox(height: 8),
+                      Row(children: [
+                        Expanded(
+                            flex: 2,
+                            child: _editField(cityCtl, 'City')),
+                        const SizedBox(width: 8),
+                        Expanded(
+                            child: _editField(stateCtl, 'State',
+                                caps: TextCapitalization.characters)),
+                      ]),
+                      const SizedBox(height: 8),
+                      _editField(countryCtl, 'Country'),
+                      _editSectionLabel('Notes'),
+                      _editField(commentCtl, 'Comments', maxLines: 3),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('Save'),
+                ),
               ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
+            );
+          },
+        );
+      },
     );
 
+    for (final c in allCtls) { c.dispose(); }
     if (saved != true || !mounted) return;
 
     final freq = double.tryParse(freqCtl.text.trim()) ?? q.freqMhz;
+
+    // Rebuild extra: preserve unknown fields, update known ones.
     final extra = Map<String, String>.from(q.extra);
-    final city    = cityCtl.text.trim();
-    final state   = stateCtl.text.trim();
-    final country = countryCtl.text.trim();
-    if (city.isNotEmpty)    { extra['QTH']     = city; }    else { extra.remove('QTH'); }
-    if (state.isNotEmpty)   { extra['STATE']   = state; }   else { extra.remove('STATE'); }
-    if (country.isNotEmpty) { extra['COUNTRY'] = country; } else { extra.remove('COUNTRY'); }
+    void setOrRemove(String key, String val) {
+      if (val.isNotEmpty) { extra[key] = val; } else { extra.remove(key); }
+    }
+    setOrRemove('QTH',          cityCtl.text.trim());
+    setOrRemove('STATE',        stateCtl.text.trim());
+    setOrRemove('COUNTRY',      countryCtl.text.trim());
+    setOrRemove('TX_PWR',       powerCtl.text.trim());
+    setOrRemove('MY_GRIDSQUARE',locatorCtl.text.trim());
+    setOrRemove('CQZ',          cqCtl.text.trim());
+    setOrRemove('ITU_ZONE',     ituCtl.text.trim());
+    setOrRemove('IOTA',         iotaCtl.text.trim());
+    setOrRemove('DXCC',         dxccCtl.text.trim());
+    setOrRemove('WWFF_REF',     wwffCtl.text.trim());
+    setOrRemove('SKCC',         skccCtl.text.trim());
+    setOrRemove('QSL_VIA',      qslViaCtl.text.trim());
+    setOrRemove('TEN_TEN',      tentenCtl.text.trim());
+    setOrRemove('URL',          urlCtl.text.trim());
+    setOrRemove('DE',           dxDeCtl.text.trim());
 
     final updated = QsoRecord(
       call:       callCtl.text.trim().toUpperCase(),
-      band:       _freqToBand(freq),
-      mode:       modeCtl.text.trim().toUpperCase(),
+      band:       dlgBand.isNotEmpty ? dlgBand : _freqToBand(freq),
+      mode:       dlgMode.isNotEmpty ? dlgMode : q.mode,
       freqMhz:    freq,
-      timeOn:     q.timeOn,
-      timeOff:    q.timeOff,
+      timeOn:     _parseUtc(timeOnCtl.text) ?? q.timeOn,
+      timeOff:    timeOffCtl.text.trim().isNotEmpty
+                      ? _parseUtc(timeOffCtl.text)
+                      : null,
       rstSent:    rstSCtl.text.trim().isNotEmpty ? rstSCtl.text.trim() : null,
       rstRcvd:    rstRCtl.text.trim().isNotEmpty ? rstRCtl.text.trim() : null,
       name:       nameCtl.text.trim().isNotEmpty ? nameCtl.text.trim() : null,
-      gridsquare: q.gridsquare,
-      comment:    commentCtl.text.trim().isNotEmpty ? commentCtl.text.trim() : null,
+      gridsquare: gridCtl.text.trim().isNotEmpty ? gridCtl.text.trim() : null,
+      comment:    commentCtl.text.trim().isNotEmpty
+                      ? commentCtl.text.trim()
+                      : null,
       mySotaRef:  q.mySotaRef,
-      sotaRef:    q.sotaRef,
+      sotaRef:    sotaCtl.text.trim().isNotEmpty ? sotaCtl.text.trim() : null,
       myPotaRef:  q.myPotaRef,
-      potaRef:    q.potaRef,
+      potaRef:    potaCtl.text.trim().isNotEmpty ? potaCtl.text.trim() : null,
       extra:      extra,
     );
 
     final newRecords = List<QsoRecord>.from(_records);
     newRecords[index] = updated;
 
-    // Rewrite file in chronological order (records are stored newest-first).
     final content = AdifLog.encode(newRecords.reversed.toList());
     await File(widget.logPath).writeAsString(content);
 
     setState(() => _records = newRecords);
   }
+
+  static const List<String> _allBands = [
+    '160m', '80m', '60m', '40m', '30m', '20m', '17m', '15m', '12m', '10m',
+    '6m', '2m', '70cm',
+  ];
+
+  static const List<(String, String)> _allModes = [
+    ('AM', 'AM'),
+    ('ARDOP', 'ARDOP'),
+    ('ATV', 'ATV'),
+    ('CHIP', 'CHIP'),
+    ('CHIP128', '  CHIP128'),
+    ('CHIP64', '  CHIP64'),
+    ('CLO', 'CLO'),
+    ('CONTESTI', 'CONTESTI'),
+    ('CW', 'CW'),
+    ('PCW', '  PCW'),
+    ('DATA', 'DATA'),
+    ('DIGITALVOICE', 'DIGITALVOICE'),
+    ('C4FM', '  C4FM'),
+    ('DMR', '  DMR'),
+    ('DSTAR', '  DSTAR'),
+    ('FREEDV', '  FREEDV'),
+    ('M17', '  M17'),
+    ('NXDN', '  NXDN'),
+    ('P25', '  P25'),
+    ('DOMINO', 'DOMINO'),
+    ('DOMINOF', '  DOMINOF'),
+    ('DYNAMIC', 'DYNAMIC'),
+    ('FAX', 'FAX'),
+    ('FM', 'FM'),
+    ('FMHELL', '  FMHELL'),
+    ('FSKHELL', '  FSKHELL'),
+    ('HELL80', '  HELL80'),
+    ('HELLSCHREIBER', '  HELLSCHREIBER'),
+    ('PSKHELL', '  PSKHELL'),
+    ('SLOWHELL', '  SLOWHELL'),
+    ('FT4', 'FT4'),
+    ('FT8', 'FT8'),
+    ('FSQCALL', 'FSQCALL'),
+    ('FSK441', 'FSK441'),
+    ('HELL', 'HELL'),
+    ('ISCAT', 'ISCAT'),
+    ('JS8', 'JS8'),
+    ('JT4', 'JT4'),
+    ('JT44', 'JT44'),
+    ('JT65', 'JT65'),
+    ('JT9', 'JT9'),
+    ('LSB', 'LSB'),
+    ('MFSK', 'MFSK'),
+    ('MFSK16', '  MFSK16'),
+    ('MFSK22', '  MFSK22'),
+    ('MFSK31', '  MFSK31'),
+    ('MFSK32', '  MFSK32'),
+    ('MFSK4', '  MFSK4'),
+    ('MFSK64', '  MFSK64'),
+    ('MFSK8', '  MFSK8'),
+    ('MSK144', 'MSK144'),
+    ('MT63', 'MT63'),
+    ('OLIVIA', 'OLIVIA'),
+    ('OLIVIA 16/500', '  OLIVIA 16/500'),
+    ('OLIVIA 32/1000', '  OLIVIA 32/1000'),
+    ('OLIVIA 4/125', '  OLIVIA 4/125'),
+    ('OLIVIA 4/250', '  OLIVIA 4/250'),
+    ('OLIVIA 8/250', '  OLIVIA 8/250'),
+    ('OPERA', 'OPERA'),
+    ('PAC', 'PAC'),
+    ('PAC2', '  PAC2'),
+    ('PAC3', '  PAC3'),
+    ('PAC4', '  PAC4'),
+    ('PAX', 'PAX'),
+    ('PAX2', '  PAX2'),
+    ('PKT', 'PKT'),
+    ('PSK', 'PSK'),
+    ('PSK10', '  PSK10'),
+    ('PSK125', '  PSK125'),
+    ('PSK2K', '  PSK2K'),
+    ('PSK31', '  PSK31'),
+    ('PSK63', '  PSK63'),
+    ('PSK63F', '  PSK63F'),
+    ('PSK63RC10', '  PSK63RC10'),
+    ('PSK63RC20', '  PSK63RC20'),
+    ('PSK63RC32', '  PSK63RC32'),
+    ('PSK63RC4', '  PSK63RC4'),
+    ('PSK63RC5', '  PSK63RC5'),
+    ('PSK125C12', '  PSK125C12'),
+    ('PSK125R', '  PSK125R'),
+    ('PSK125RC10', '  PSK125RC10'),
+    ('PSK125RC12', '  PSK125RC12'),
+    ('PSK125RC16', '  PSK125RC16'),
+    ('PSK125RC4', '  PSK125RC4'),
+    ('PSK125RC5', '  PSK125RC5'),
+    ('PSK250', '  PSK250'),
+    ('PSK250C6', '  PSK250C6'),
+    ('PSK250R', '  PSK250R'),
+    ('PSK250RC2', '  PSK250RC2'),
+    ('PSK250RC3', '  PSK250RC3'),
+    ('PSK250RC5', '  PSK250RC5'),
+    ('PSK250RC6', '  PSK250RC6'),
+    ('PSK500', '  PSK500'),
+    ('PSK500C2', '  PSK500C2'),
+    ('PSK500C4', '  PSK500C4'),
+    ('PSK500R', '  PSK500R'),
+    ('PSK500RC2', '  PSK500RC2'),
+    ('PSK500RC3', '  PSK500RC3'),
+    ('PSK500RC4', '  PSK500RC4'),
+    ('PSK1000', '  PSK1000'),
+    ('PSK1000C2', '  PSK1000C2'),
+    ('PSK1000R', '  PSK1000R'),
+    ('PSK1000RC2', '  PSK1000RC2'),
+    ('Q15', 'Q15'),
+    ('QRA64', 'QRA64'),
+    ('ROS', 'ROS'),
+    ('RTTY', 'RTTY'),
+    ('RTTYM', 'RTTYM'),
+    ('SSB', 'SSB'),
+    ('USB', 'USB'),
+    ('SSTV', 'SSTV'),
+    ('T10', 'T10'),
+    ('THOR', 'THOR'),
+    ('THOR11', '  THOR11'),
+    ('THOR16', '  THOR16'),
+    ('THOR22', '  THOR22'),
+    ('THOR25X4', '  THOR25X4'),
+    ('THOR4', '  THOR4'),
+    ('THOR50X1', '  THOR50X1'),
+    ('THOR50X2', '  THOR50X2'),
+    ('THOR8', '  THOR8'),
+    ('THRB', 'THRB'),
+    ('THRBX', '  THRBX'),
+    ('THRBX1', '  THRBX1'),
+    ('THRBX2', '  THRBX2'),
+    ('THRBX4', '  THRBX4'),
+    ('TOR', 'TOR'),
+    ('V4', 'V4'),
+    ('VOI', 'VOI'),
+    ('WINMOR', 'WINMOR'),
+    ('WSPR', 'WSPR'),
+  ];
 
   Widget _editField(TextEditingController ctl, String label, {
     TextInputType? keyboard,
@@ -588,6 +999,83 @@ class _LogScreenState extends State<LogScreen> {
       keyboardType: keyboard,
       textCapitalization: caps,
       maxLines: maxLines,
+    );
+  }
+
+  Widget _modeDropdownField(String value, ValueChanged<String> onChanged) {
+    return InputDecorator(
+      decoration: const InputDecoration(
+        labelText: 'Mode',
+        isDense: true,
+        border: OutlineInputBorder(),
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: _allModes.any((e) => e.$1 == value) ? value : null,
+          isDense: true,
+          isExpanded: true,
+          hint: const Text('—', style: TextStyle(fontSize: 13)),
+          style: const TextStyle(fontSize: 13),
+          items: [
+            for (final (v, label) in _allModes)
+              DropdownMenuItem(value: v, child: Text(label)),
+          ],
+          onChanged: (m) { if (m != null) onChanged(m); },
+        ),
+      ),
+    );
+  }
+
+  Widget _bandDropdownField(String value, ValueChanged<String> onChanged) {
+    return InputDecorator(
+      decoration: const InputDecoration(
+        labelText: 'Band',
+        isDense: true,
+        border: OutlineInputBorder(),
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: value.isNotEmpty ? value : null,
+          isDense: true,
+          isExpanded: true,
+          hint: const Text('—', style: TextStyle(fontSize: 13)),
+          style: const TextStyle(fontSize: 13),
+          items: [
+            for (final b in _allBands)
+              DropdownMenuItem(value: b, child: Text(b)),
+          ],
+          onChanged: (b) { if (b != null) onChanged(b); },
+        ),
+      ),
+    );
+  }
+
+  Widget _editSectionLabel(String label) => Padding(
+    padding: const EdgeInsets.only(top: 12, bottom: 4),
+    child: Text(label,
+        style: TextStyle(fontSize: 11, color: Colors.grey.shade500,
+            fontWeight: FontWeight.w600)),
+  );
+
+  static String _fmtUtc(DateTime dt) =>
+      '${dt.year.toString().padLeft(4, '0')}-'
+      '${dt.month.toString().padLeft(2, '0')}-'
+      '${dt.day.toString().padLeft(2, '0')} '
+      '${dt.hour.toString().padLeft(2, '0')}:'
+      '${dt.minute.toString().padLeft(2, '0')}:'
+      '${dt.second.toString().padLeft(2, '0')}';
+
+  static DateTime? _parseUtc(String text) {
+    final m = RegExp(
+            r'^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})(?::(\d{2}))?$')
+        .firstMatch(text.trim());
+    if (m == null) return null;
+    return DateTime.utc(
+      int.parse(m.group(1)!), int.parse(m.group(2)!), int.parse(m.group(3)!),
+      int.parse(m.group(4)!), int.parse(m.group(5)!),
+      int.tryParse(m.group(6) ?? '') ?? 0,
     );
   }
 
@@ -816,6 +1304,7 @@ class _LogScreenState extends State<LogScreen> {
                                   DataColumn(label: Text('Date/Time')),
                                   DataColumn(label: Text('Callsign')),
                                   DataColumn(label: Text('Freq')),
+                                  DataColumn(label: Text('Band')),
                                   DataColumn(label: Text('Mode')),
                                   DataColumn(label: Text('RST Sent')),
                                   DataColumn(label: Text('RST Rcvd')),
@@ -862,6 +1351,10 @@ class _LogScreenState extends State<LogScreen> {
                                         style: const TextStyle(
                                             fontFamily: 'monospace',
                                             fontSize: 12))),
+                                    cell(Text(q.band,
+                                        style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.amber.shade400))),
                                     cell(Text(q.mode)),
                                     cell(Text(q.rstSent ?? '',
                                         style: const TextStyle(fontSize: 12))),
