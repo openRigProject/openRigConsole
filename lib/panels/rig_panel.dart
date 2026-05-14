@@ -186,6 +186,7 @@ class _RigPanelState extends State<RigPanel> {
                         fontWeight: FontWeight.w300,
                         color: Colors.white,
                         letterSpacing: 2,
+                        fontFeatures: [FontFeature.tabularFigures()],
                       ),
                     ),
                   ),
