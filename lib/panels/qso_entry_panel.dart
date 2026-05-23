@@ -9,6 +9,20 @@ import '../services/connection_service.dart';
 import '../services/settings_service.dart';
 
 // ---------------------------------------------------------------------------
+// QRZ lookup cache — module-level so it persists across widget rebuilds.
+// ---------------------------------------------------------------------------
+
+class _QrzCacheEntry {
+  final CallsignInfo info;
+  final DateTime cachedAt;
+  _QrzCacheEntry(this.info) : cachedAt = DateTime.now();
+  bool get isValid =>
+      DateTime.now().difference(cachedAt) < const Duration(hours: 24);
+}
+
+final _qrzCache = <String, _QrzCacheEntry>{};
+
+// ---------------------------------------------------------------------------
 // QSO source — rig VFO or hotspot last-heard station
 // ---------------------------------------------------------------------------
 
@@ -81,6 +95,7 @@ class QsoEntryPanel extends StatefulWidget {
 class _QsoEntryPanelState extends State<QsoEntryPanel> {
   // ── Callsign + contact fields ───────────────────────────────────────────
   final _callCtl     = TextEditingController();
+  final _callFocus   = FocusNode();
   final _notesCtl    = TextEditingController();
 
   // ── QSO data fields ─────────────────────────────────────────────────────
@@ -375,6 +390,7 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
   _QsoSource? _selectedSource;
   OpenRigApiClient? _hotspotApiClient;
   Timer? _hotspotPollTimer;
+  int _deviceFreqHz = 0; // last frequency reported by the active device/hotspot
   StreamSubscription<OpenRigDevice>? _deviceFoundSub;
   StreamSubscription<String>? _deviceLostSub;
 
@@ -422,6 +438,7 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
     _deviceFoundSub?.cancel();
     _deviceLostSub?.cancel();
     _cs.removeListener(_onConnectionChanged);
+    _callFocus.dispose();
     for (final c in [
       _callCtl, _notesCtl, _rstSentCtl, _rstRcvdCtl, _powerCtl,
       _gridCtl, _locatorCtl, _ituCtl, _iotaCtl, _skccCtl,
@@ -513,6 +530,7 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
 
     setState(() {
       _selectedSource = source;
+      _deviceFreqHz = 0;
       _frequencyHz = 0;
       _band = '';
       _mode = '';
@@ -539,6 +557,7 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
       final config = await client.getHotspot();
       if (mounted && config.rfFrequencyMhz > 0) {
         final hz = (config.rfFrequencyMhz * 1e6).round();
+        _deviceFreqHz = hz;
         setState(() { _frequencyHz = hz; _band = _freqToBand(hz / 1e6); });
       }
     } catch (_) {}
@@ -580,11 +599,19 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
     if (client == null) return;
     try {
       final clients = await client.getClients();
-      if (!mounted || clients.isEmpty) return;
-      final latest = clients.first;
+      if (!mounted) return;
       setState(() {
-        _mode = _mapHotspotMode(latest.mode);
-        if (_callCtl.text.isEmpty) _callCtl.text = latest.callsign;
+        // Always restore the hotspot's configured RF frequency — a spot load
+        // may have temporarily overwritten _frequencyHz.
+        if (_deviceFreqHz != 0) {
+          _frequencyHz = _deviceFreqHz;
+          _band = _freqToBand(_deviceFreqHz / 1e6);
+        }
+        if (clients.isNotEmpty) {
+          final latest = clients.first;
+          _mode = _mapHotspotMode(latest.mode);
+          if (_callCtl.text.isEmpty) _callCtl.text = latest.callsign;
+        }
       });
     } catch (_) {}
   }
@@ -601,6 +628,7 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
 
   void _setFrequencyFromDevice(int hz) {
     if (!mounted) return;
+    _deviceFreqHz = hz;
     setState(() {
       _frequencyHz = hz;
       _band = _freqToBand(hz / 1e6);
@@ -619,6 +647,7 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
     _hasPotaLocation = spot.parkRef != null;
     setState(() {
       _callCtl.text = spot.dxCall;
+      _frequencyHz = hz;
       _band = _freqToBand(hz / 1e6);
       if (mode != null) _mode = mode;
       _qrzInfo = null;
@@ -645,6 +674,8 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
   }
 
   void _loadCallsign(String callsign, {String? mode}) {
+    // Don't clobber a callsign the user is actively typing.
+    if (_callFocus.hasFocus && _callCtl.text.trim().isNotEmpty) return;
     _hasPotaLocation = false;
     setState(() {
       _callCtl.text = callsign.toUpperCase();
@@ -652,6 +683,11 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
       _potaCtl.clear();
       _potaParkName = null;
       if (mode != null) _mode = _mapHotspotMode(mode);
+      // Restore hotspot RF frequency when a callsign arrives from last-heard.
+      if (_deviceFreqHz != 0) {
+        _frequencyHz = _deviceFreqHz;
+        _band = _freqToBand(_deviceFreqHz / 1e6);
+      }
     });
     _lookupQrz();
   }
@@ -701,12 +737,50 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
 
   // ── QRZ ─────────────────────────────────────────────────────────────────
 
+  void _applyQrzResult(CallsignInfo info, String lookupKey,
+      String? prefixCountryOverride) {
+    if (!mounted) return;
+    double? mapLat, mapLon;
+    if (info.grid.isNotEmpty && !_hasPotaLocation) {
+      final loc = gridToLatLon(info.grid);
+      if (loc != null) { mapLat = loc.lat; mapLon = loc.lon; }
+    }
+    setState(() {
+      _qrzInfo = info;
+      if (info.grid.isNotEmpty)    _gridCtl.text    = info.grid;
+      if (info.cqZone.isNotEmpty)  _cqCtl.text      = info.cqZone;
+      if (info.ituZone.isNotEmpty) _ituCtl.text     = info.ituZone;
+      if (info.iota.isNotEmpty)    _iotaCtl.text    = info.iota;
+      if (info.qslMgr.isNotEmpty)  _qslViaCtl.text  = info.qslMgr;
+      if (info.url.isNotEmpty)     _urlCtl.text     = info.url;
+      if (prefixCountryOverride != null) {
+        _dxccCtl.text = prefixCountryOverride;
+      } else if (info.dxcc.isNotEmpty) {
+        _dxccCtl.text = info.dxcc;
+      }
+    });
+    if (mapLat != null && mapLon != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) widget.onLocationChanged?.call(mapLat!, mapLon!, lookupKey);
+      });
+    }
+  }
+
   Future<void> _lookupQrz() async {
     var raw = normalizeCallsign(_callCtl.text);
     if (raw.isEmpty) return;
+    // A purely numeric string is a raw DMR ID — not a callsign, skip QRZ.
+    if (RegExp(r'^\d+$').hasMatch(raw)) return;
     // Strip -SUFFIX (e.g. "W1AW-9" -> "W1AW"), matching web UI baseCall().
     final dashIdx = raw.indexOf('-');
     if (dashIdx > 0) raw = raw.substring(0, dashIdx);
+    // Check cache before hitting the API.
+    final cached = _qrzCache[raw];
+    if (cached != null && cached.isValid) {
+      _applyQrzResult(cached.info, raw, null);
+      return;
+    }
+
     final user = widget.settings.qrzXmlUser;
     final pass = widget.settings.qrzXmlPass;
     if (user.isEmpty || pass.isEmpty) {
@@ -751,35 +825,8 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
 
       client.dispose();
       if (!mounted) return;
-      // Compute map location before setState so we can fire the callback
-      // after the build cycle rather than from inside the setState closure.
-      double? mapLat, mapLon;
-      if (info.grid.isNotEmpty && !_hasPotaLocation) {
-        final loc = gridToLatLon(info.grid);
-        if (loc != null) { mapLat = loc.lat; mapLon = loc.lon; }
-      }
-      setState(() {
-        _qrzInfo = info;
-        if (info!.grid.isNotEmpty)    _gridCtl.text    = info.grid;
-        if (info.cqZone.isNotEmpty)   _cqCtl.text      = info.cqZone;
-        if (info.ituZone.isNotEmpty)  _ituCtl.text     = info.ituZone;
-        if (info.iota.isNotEmpty)     _iotaCtl.text    = info.iota;
-        if (info.qslMgr.isNotEmpty)   _qslViaCtl.text  = info.qslMgr;
-        if (info.url.isNotEmpty)      _urlCtl.text     = info.url;
-        // Country override wins if operating under a foreign prefix
-        if (prefixCountryOverride != null) {
-          _dxccCtl.text = prefixCountryOverride;
-        } else if (info.dxcc.isNotEmpty) {
-          _dxccCtl.text = info.dxcc;
-        }
-      });
-      // Update the map after the build cycle so the ValueNotifier update
-      // reaches MapPanel cleanly rather than from within setState.
-      if (mapLat != null && mapLon != null) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) widget.onLocationChanged?.call(mapLat!, mapLon!, raw);
-        });
-      }
+      _qrzCache[raw] = _QrzCacheEntry(info);
+      _applyQrzResult(info, raw, prefixCountryOverride);
     } on QrzXmlException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -992,6 +1039,16 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
     }
 
     final freqMhz = _frequencyHz / 1e6;
+    // Use live QRZ result if available, otherwise fall back to the cache.
+    // This covers the case where the user logs quickly before the async
+    // lookup completes, or where the callsign was looked up in a prior session.
+    final qrz = _qrzInfo ?? () {
+      var lookupKey = call;
+      final dash = lookupKey.indexOf('-');
+      if (dash > 0) lookupKey = lookupKey.substring(0, dash);
+      final entry = _qrzCache[lookupKey];
+      return (entry != null && entry.isValid) ? entry.info : null;
+    }();
     final record = QsoRecord(
       call: call,
       band: _band.isNotEmpty ? _band : _freqToBand(freqMhz),
@@ -1001,15 +1058,15 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
       timeOff: _timeOff,
       rstSent: _rstSentCtl.text.trim(),
       rstRcvd: _rstRcvdCtl.text.trim(),
-      name: _qrzInfo?.fullName.isNotEmpty == true ? _qrzInfo!.fullName : null,
+      name: qrz?.fullName.isNotEmpty == true ? qrz!.fullName : null,
       comment: _notesCtl.text.trim().isNotEmpty ? _notesCtl.text.trim() : null,
       gridsquare: _gridCtl.text.trim().isNotEmpty ? _gridCtl.text.trim() : null,
       sotaRef: _sotaCtl.text.trim().isNotEmpty ? _sotaCtl.text.trim() : null,
       potaRef: _potaCtl.text.trim().isNotEmpty ? _potaCtl.text.trim() : null,
       extra: {
-        if (_qrzInfo?.city.isNotEmpty == true) 'QTH': _qrzInfo!.city,
-        if (_qrzInfo?.state.isNotEmpty == true) 'STATE': _qrzInfo!.state,
-        if (_qrzInfo?.country.isNotEmpty == true) 'COUNTRY': _qrzInfo!.country,
+        if (qrz?.city.isNotEmpty == true) 'QTH': qrz!.city,
+        if (qrz?.state.isNotEmpty == true) 'STATE': qrz!.state,
+        if (qrz?.country.isNotEmpty == true) 'COUNTRY': qrz!.country,
         if (_powerCtl.text.trim().isNotEmpty) 'TX_PWR': _powerCtl.text.trim(),
         if (_locatorCtl.text.trim().isNotEmpty) 'MY_GRIDSQUARE': _locatorCtl.text.trim(),
         if (_cqCtl.text.trim().isNotEmpty) 'CQZ': _cqCtl.text.trim(),
@@ -1277,6 +1334,7 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
                     height: 22,
                     child: TextField(
                       controller: _callCtl,
+                      focusNode: _callFocus,
                       textCapitalization: TextCapitalization.characters,
                       textInputAction: TextInputAction.search,
                       onSubmitted: (_) => _lookupQrz(),

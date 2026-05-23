@@ -401,6 +401,13 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
   bool _serversLoading = false;
   bool _linking = false;
 
+  // ── DMR Talkgroup Manager ─────────────────────────────────────────────────
+  String? _activeDmrTg;
+  String? _activeDmrTgName;
+  final _dmrTgInputCtl = TextEditingController();
+  int _dmrSlot = 2;
+  bool _joiningDmr = false;
+
   // Hotspot edit controllers
   final _rfFreqCtl = TextEditingController();
   final _dmrIdCtl = TextEditingController();
@@ -450,6 +457,7 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
     _ysfReflectorCtl.dispose();
     _ysfDescCtl.dispose();
     _reflectorCtl.dispose();
+    _dmrTgInputCtl.dispose();
     super.dispose();
   }
 
@@ -551,6 +559,14 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
               (e) => e.callsign == entry.callsign && e.mode == entry.mode);
           _lastHeard.insert(0, entry);
           if (_lastHeard.length > 50) _lastHeard.removeLast();
+          // Track active DMR talkgroup for the DMR manager panel.
+          if (entry.mode == 'DMR' && entry.info.isNotEmpty) {
+            _activeDmrTg = entry.info;
+            _activeDmrTgName = _talkgroups
+                .where((tg) => tg.id.toString() == entry.info)
+                .map((tg) => tg.name)
+                .firstOrNull;
+          }
         });
         // Auto-load callsign info when a new (not an update) transmission
         // arrives, but only while the Devices tab is the active tab so we
@@ -645,6 +661,66 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
       }
     } finally {
       if (mounted) setState(() => _linking = false);
+    }
+  }
+
+  // ── DMR Talkgroup Manager actions ─────────────────────────────────────────
+
+  Future<void> _connectDmr() async {
+    if (_hotspotClient == null) return;
+    try {
+      await _hotspotClient!.connectDmr();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('DMR connect command sent')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Connect failed: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _disconnectDmr() async {
+    if (_hotspotClient == null) return;
+    try {
+      await _hotspotClient!.disconnectDmr();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('DMR disconnect command sent')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Disconnect failed: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _joinDmrTg() async {
+    final tg = int.tryParse(_dmrTgInputCtl.text.trim());
+    if (tg == null || tg < 1 || _hotspotClient == null) return;
+    setState(() => _joiningDmr = true);
+    try {
+      await _hotspotClient!.joinDmrTg(tg, _dmrSlot);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Join command sent for TG $tg')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Join failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _joiningDmr = false);
     }
   }
 
@@ -1186,6 +1262,157 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
                                   ),
                               ],
                             ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+
+                      // DMR Talkgroup Manager
+                      if (_hotspot != null && _hotspot!.dmr.enabled) ...[
+                        _SectionCard(
+                          title: 'DMR Talkgroup Manager',
+                          icon: Icons.radio,
+                          children: [
+                            // Network + connect/disconnect
+                            Row(
+                              children: [
+                                Text('Network',
+                                    style: TextStyle(
+                                        color: Colors.grey.shade400,
+                                        fontSize: 13)),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _hotspot!.dmr.masterServer,
+                                    style: const TextStyle(fontSize: 13),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: _connectDmr,
+                                  child: const Text('Connect'),
+                                ),
+                                const SizedBox(width: 4),
+                                OutlinedButton(
+                                  onPressed: _disconnectDmr,
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.orange,
+                                    side: const BorderSide(
+                                        color: Colors.orange),
+                                  ),
+                                  child: const Text('Disconnect'),
+                                ),
+                              ],
+                            ),
+                            // Active TG
+                            if (_activeDmrTg != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 6),
+                                child: Row(
+                                  children: [
+                                    Text('Active TG',
+                                        style: TextStyle(
+                                            color: Colors.grey.shade400,
+                                            fontSize: 13)),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'TG $_activeDmrTg'
+                                      '${_activeDmrTgName != null && _activeDmrTgName!.isNotEmpty ? ' — $_activeDmrTgName' : ''}',
+                                      style: TextStyle(
+                                        color: Colors.blue.shade400,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            // Join TG input
+                            Padding(
+                              padding: const EdgeInsets.only(top: 10),
+                              child: Row(
+                                children: [
+                                  SizedBox(
+                                    width: 110,
+                                    child: TextField(
+                                      controller: _dmrTgInputCtl,
+                                      keyboardType: TextInputType.number,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Join TG',
+                                        hintText: 'e.g. 91',
+                                        isDense: true,
+                                        border: OutlineInputBorder(),
+                                      ),
+                                      style: const TextStyle(fontSize: 13),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  DropdownButton<int>(
+                                    value: _dmrSlot,
+                                    items: const [
+                                      DropdownMenuItem(
+                                          value: 1, child: Text('Slot 1')),
+                                      DropdownMenuItem(
+                                          value: 2, child: Text('Slot 2')),
+                                    ],
+                                    onChanged: (v) =>
+                                        setState(() => _dmrSlot = v ?? 2),
+                                    isDense: true,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  _joiningDmr
+                                      ? const SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2))
+                                      : FilledButton(
+                                          onPressed: _joinDmrTg,
+                                          child: const Text('Join'),
+                                        ),
+                                ],
+                              ),
+                            ),
+                            // Configured TG pills (quick-pick)
+                            if (_talkgroups.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 10),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'CONFIGURED TALKGROUPS',
+                                      style: TextStyle(
+                                          fontSize: 11,
+                                          color: Colors.grey.shade500,
+                                          letterSpacing: 0.8),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Wrap(
+                                      spacing: 6,
+                                      runSpacing: 6,
+                                      children: _talkgroups
+                                          .map((tg) => ActionChip(
+                                                label: Text(
+                                                  tg.name.isNotEmpty
+                                                      ? '${tg.name} (${tg.id})'
+                                                      : 'TG ${tg.id}',
+                                                  style: const TextStyle(
+                                                      fontSize: 12),
+                                                ),
+                                                onPressed: () =>
+                                                    setState(() {
+                                                  _dmrTgInputCtl.text =
+                                                      tg.id.toString();
+                                                  _dmrSlot = tg.slot;
+                                                }),
+                                              ))
+                                          .toList(),
+                                    ),
+                                  ],
+                                ),
+                              ),
                           ],
                         ),
                         const SizedBox(height: 16),

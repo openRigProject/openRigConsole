@@ -1,6 +1,6 @@
 name: openrig_console
 description: openRig Console — desktop CAT control, QSO logging, and DX Cluster.
-version: 0.2.0
+version: 0.3.0
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
