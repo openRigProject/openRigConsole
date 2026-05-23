@@ -433,11 +433,15 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
   }
 
   void _onTabChanged() {
-    // When the user switches back to the Devices tab (index 3), immediately
-    // reload the top-of-list callsign so the map stays current.
-    if (widget.tabController?.index == 3 &&
-        _lastHeard.isNotEmpty &&
-        widget.qsoController != null) {
+    if (widget.tabController?.index != 3) return;
+    // Always restore the hotspot RF frequency when returning to this tab —
+    // a spot click may have overwritten it while on another tab.
+    if (_hotspot != null && _hotspot!.rfFrequencyMhz > 0) {
+      widget.qsoController?.setFrequency(
+          (_hotspot!.rfFrequencyMhz * 1e6).round());
+    }
+    // Reload the top-of-list callsign so the map stays current.
+    if (_lastHeard.isNotEmpty && widget.qsoController != null) {
       widget.qsoController!.loadCallsign(_lastHeard.first.callsign,
           mode: _lastHeard.first.mode);
     }
