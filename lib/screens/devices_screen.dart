@@ -1272,7 +1272,7 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
                       ],
 
                       // DMR Talkgroup Manager
-                      if (_hotspot != null && _hotspot!.dmr.enabled) ...[
+                      if (_hotspot != null && _dmrEnabled) ...[
                         _SectionCard(
                           title: 'DMR Talkgroup Manager',
                           icon: Icons.radio,
