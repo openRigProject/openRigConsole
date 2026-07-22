@@ -11,7 +11,7 @@ class SolarImagePanel extends StatefulWidget {
 }
 
 class _SolarImagePanelState extends State<SolarImagePanel> {
-  static const _baseUrl = 'https://www.hamqsl.com/solar101pic.php';
+  static const _baseUrl = 'https://www.hamqsl.com/solar101vhfper.php';
 
   late String _url;
   Timer? _timer;
