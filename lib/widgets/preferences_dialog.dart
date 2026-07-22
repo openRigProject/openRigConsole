@@ -17,7 +17,6 @@ class _PreferencesDialogState extends State<PreferencesDialog> {
   late final TextEditingController _clusterHostCtl;
   late final TextEditingController _clusterPortCtl;
   late final TextEditingController _logPathCtl;
-  late final TextEditingController _sidecarPortCtl;
   late final TextEditingController _qrzApiKeyCtl;
   late final TextEditingController _qrzXmlUserCtl;
   late final TextEditingController _qrzXmlPassCtl;
@@ -35,7 +34,6 @@ class _PreferencesDialogState extends State<PreferencesDialog> {
     _clusterHostCtl = TextEditingController(text: _s.clusterHost);
     _clusterPortCtl = TextEditingController(text: _s.clusterPort.toString());
     _logPathCtl = TextEditingController(text: _s.logPath);
-    _sidecarPortCtl = TextEditingController(text: _s.sidecarPort.toString());
     _qrzApiKeyCtl = TextEditingController(text: _s.qrzApiKey);
     _qrzXmlUserCtl = TextEditingController(text: _s.qrzXmlUser);
     _qrzXmlPassCtl = TextEditingController(text: _s.qrzXmlPass);
@@ -48,7 +46,6 @@ class _PreferencesDialogState extends State<PreferencesDialog> {
     _clusterHostCtl.dispose();
     _clusterPortCtl.dispose();
     _logPathCtl.dispose();
-    _sidecarPortCtl.dispose();
     _qrzApiKeyCtl.dispose();
     _qrzXmlUserCtl.dispose();
     _qrzXmlPassCtl.dispose();
@@ -68,9 +65,6 @@ class _PreferencesDialogState extends State<PreferencesDialog> {
       int.tryParse(_clusterPortCtl.text.trim()) ?? 23,
     );
     await _s.setLogPath(_logPathCtl.text.trim());
-    await _s.setSidecarPort(
-      int.tryParse(_sidecarPortCtl.text.trim()) ?? 4532,
-    );
     if (mounted) Navigator.of(context).pop(true);
   }
 
@@ -123,20 +117,8 @@ class _PreferencesDialogState extends State<PreferencesDialog> {
     }
   }
 
-  Future<void> _forgetLastDevice() async {
-    await _s.clearLastDevice();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Saved device cleared')),
-      );
-      setState(() {});
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final lastHost = _s.lastHost;
-
     return AlertDialog(
       title: const Text('Preferences'),
       content: SizedBox(
@@ -268,45 +250,6 @@ class _PreferencesDialogState extends State<PreferencesDialog> {
                           onPressed: _verifyQrzXml,
                           child: const Text('Verify'),
                         ),
-                ],
-              ),
-              const SizedBox(height: 20),
-
-              // -- Connection --
-              _SectionHeader('Connection'),
-              Row(
-                children: [
-                  Expanded(
-                    flex: 3,
-                    child: TextField(
-                      controller: _sidecarPortCtl,
-                      decoration: const InputDecoration(
-                        labelText: 'Sidecar rigctld port',
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  const Spacer(),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Text(
-                    lastHost != null
-                        ? 'Last device: $lastHost:${_s.lastPort}'
-                        : 'No saved device',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.grey.shade400,
-                    ),
-                  ),
-                  const Spacer(),
-                  if (lastHost != null)
-                    TextButton(
-                      onPressed: _forgetLastDevice,
-                      child: const Text('Forget'),
-                    ),
                 ],
               ),
             ],

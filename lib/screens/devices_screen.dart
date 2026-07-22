@@ -5,7 +5,7 @@ import 'package:openrig_core/openrig_core.dart' hide ChangeNotifier;
 import '../panels/qso_entry_panel.dart';
 import '../services/connection_service.dart';
 import '../services/settings_service.dart';
-import '../widgets/rig_settings_dialog.dart';
+
 
 class DevicesScreen extends StatefulWidget {
   final ConnectionService connectionService;
@@ -67,30 +67,6 @@ class _DevicesScreenState extends State<DevicesScreen>
 
   void _onServiceChanged() {
     if (mounted) setState(() {});
-  }
-
-  Future<void> _addRig(OpenRigDevice device) async {
-    try {
-      final label = device.callsign.isNotEmpty
-          ? '${device.callsign} (${device.type})'
-          : device.name;
-      await _cs.addRemoteRig(
-        device.host,
-        device.rigctldPort ?? 4532,
-        label: label,
-      );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Added ${device.host}')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed: $e')),
-        );
-      }
-    }
   }
 
   @override
@@ -172,8 +148,6 @@ class _DevicesScreenState extends State<DevicesScreen>
                             isSelected: isSelected,
                             onSelect: () =>
                                 setState(() => _selectedDevice = d),
-                            onAddRig:
-                                d.hasRigctld ? () => _addRig(d) : null,
                           );
                         },
                       ),
@@ -223,9 +197,6 @@ class _DevicesScreenState extends State<DevicesScreen>
                   settings: widget.settings,
                   qsoController: widget.qsoController,
                   tabController: widget.tabController,
-                  onAddRig: _selectedDevice!.hasRigctld
-                      ? () => _addRig(_selectedDevice!)
-                      : null,
                 ),
         ),
       ],
@@ -239,13 +210,11 @@ class _DeviceCard extends StatelessWidget {
   final OpenRigDevice device;
   final bool isSelected;
   final VoidCallback onSelect;
-  final VoidCallback? onAddRig;
 
   const _DeviceCard({
     required this.device,
     required this.isSelected,
     required this.onSelect,
-    this.onAddRig,
   });
 
   @override
@@ -295,34 +264,6 @@ class _DeviceCard extends StatelessWidget {
                 Text('v${device.version}',
                     style: TextStyle(
                         fontSize: 12, color: Colors.grey.shade600)),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  if (device.hasRigctld) ...[
-                    Icon(Icons.radio,
-                        size: 14, color: Colors.green.shade400),
-                    const SizedBox(width: 4),
-                    Text('rigctld :${device.rigctldPort ?? 4532}',
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.green.shade400)),
-                  ],
-                  const Spacer(),
-                  if (onAddRig != null)
-                    SizedBox(
-                      height: 28,
-                      child: FilledButton.tonal(
-                        onPressed: onAddRig,
-                        style: FilledButton.styleFrom(
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 12),
-                          textStyle: const TextStyle(fontSize: 12),
-                        ),
-                        child: const Text('Add Rig'),
-                      ),
-                    ),
-                ],
-              ),
             ],
           ),
         ),
@@ -364,7 +305,6 @@ class _DeviceDetailPanel extends StatefulWidget {
   final SettingsService settings;
   final QsoEntryController? qsoController;
   final TabController? tabController;
-  final VoidCallback? onAddRig;
 
   const _DeviceDetailPanel({
     super.key,
@@ -373,7 +313,6 @@ class _DeviceDetailPanel extends StatefulWidget {
     required this.settings,
     this.qsoController,
     this.tabController,
-    this.onAddRig,
   });
 
   @override
@@ -433,7 +372,7 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
   }
 
   void _onTabChanged() {
-    if (widget.tabController?.index != 3) return;
+    if (widget.tabController?.index != 2) return;
     // Always restore the hotspot RF frequency when returning to this tab —
     // a spot click may have overwritten it while on another tab.
     if (_hotspot != null && _hotspot!.rfFrequencyMhz > 0) {
@@ -576,7 +515,7 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
         // arrives, but only while the Devices tab is the active tab so we
         // don't clobber whatever the user is looking at on another tab.
         if (isNewTransmission &&
-            (widget.tabController == null || widget.tabController!.index == 3)) {
+            (widget.tabController == null || widget.tabController!.index == 2)) {
           widget.qsoController?.loadCallsign(entry.callsign, mode: entry.mode);
         }
       },
@@ -1039,28 +978,6 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
     );
   }
 
-  void _openRigSettings() {
-    final device = widget.device;
-    final rigs = widget.connectionService.rigManager.rigs;
-    // Find a rig entry matching this device, or create a temporary one
-    RigEntry? entry;
-    for (final r in rigs) {
-      if (r.host == device.host) {
-        entry = r;
-        break;
-      }
-    }
-    if (entry == null) return;
-    showDialog<bool>(
-      context: context,
-      builder: (_) => RigSettingsDialog(
-        rig: entry!,
-        connectionService: widget.connectionService,
-        settings: widget.settings,
-      ),
-    );
-  }
-
   String _formatUptime(int seconds) {
     if (seconds < 60) return '${seconds}s';
     final h = seconds ~/ 3600;
@@ -1477,9 +1394,6 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
 
   List<Widget> _buildConfigCards(DeviceStatus status) {
     final isHotspot = status.type == 'hotspot';
-    final isRigType =
-        status.type == 'rigctl' || status.type == 'console';
-
     return [
       // Status card
       _SectionCard(
@@ -1792,30 +1706,6 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
         const SizedBox(height: 16),
       ],
 
-      // Rig Configuration card
-      if (isRigType && widget.device.hasRigctld) ...[
-        _SectionCard(
-          title: 'Rig Configuration',
-          icon: Icons.radio,
-          children: [
-            FilledButton.icon(
-              onPressed: _openRigSettings,
-              icon: const Icon(Icons.settings, size: 16),
-              label: const Text('Configure Rig...'),
-            ),
-            if (widget.onAddRig != null) ...[
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: widget.onAddRig,
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('Add Rig'),
-              ),
-            ],
-          ],
-        ),
-        const SizedBox(height: 16),
-      ],
-
       // Services card
       _SectionCard(
         title: 'Services',
@@ -1825,11 +1715,6 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              if (widget.device.hasRigctld)
-                _ServiceButton(
-                  label: 'rigctld',
-                  onRestart: () => _restartService('rigctld'),
-                ),
               if (isHotspot) ...[
                 _ServiceButton(
                   label: 'mmdvmhost',

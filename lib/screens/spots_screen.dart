@@ -4,7 +4,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:openrig_core/openrig_core.dart';
-import '../services/connection_service.dart';
 import '../services/settings_service.dart';
 
 const _bandOptions = [
@@ -94,7 +93,6 @@ class DxClusterController {
 // ---------------------------------------------------------------------------
 
 class SpotsScreen extends StatefulWidget {
-  final ConnectionService connectionService;
   final SettingsService settings;
   final ValueChanged<List<DxSpot>>? onSpotsChanged;
   final ValueChanged<DxSpot>? onSpotSelected;
@@ -105,7 +103,6 @@ class SpotsScreen extends StatefulWidget {
 
   const SpotsScreen({
     super.key,
-    required this.connectionService,
     required this.settings,
     this.onSpotsChanged,
     this.onSpotSelected,
@@ -385,11 +382,6 @@ class _SpotsScreenState extends State<SpotsScreen>
 
   void _tuneToSpot(DxSpot spot) {
     widget.onSpotSelected?.call(spot);
-    if (widget.onSpotSelected == null) {
-      final client = widget.connectionService.client;
-      if (client == null || !client.isConnected) return;
-      client.setFrequency((spot.frequencyKhz * 1000).round());
-    }
   }
 
   void _tuneToPotatSpot(_PotaSpot spot) {
@@ -403,11 +395,6 @@ class _SpotsScreenState extends State<SpotsScreen>
       parkRef: spot.reference.isNotEmpty ? spot.reference : null,
     );
     widget.onSpotSelected?.call(synthetic);
-    if (widget.onSpotSelected == null) {
-      final client = widget.connectionService.client;
-      if (client == null || !client.isConnected) return;
-      client.setFrequency((spot.frequencyKhz * 1000).round());
-    }
     // Move map to park location if available, bypassing QRZ lookup.
     if (spot.latitude != null && spot.longitude != null) {
       final label = spot.reference.isNotEmpty ? spot.reference : spot.activator;

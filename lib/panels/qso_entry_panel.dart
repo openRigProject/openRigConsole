@@ -23,19 +23,12 @@ class _QrzCacheEntry {
 final _qrzCache = <String, _QrzCacheEntry>{};
 
 // ---------------------------------------------------------------------------
-// QSO source — rig VFO or hotspot last-heard station
+// QSO source — hotspot last-heard station
 // ---------------------------------------------------------------------------
 
 sealed class _QsoSource {
   String get id;
   String get label;
-}
-
-class _RigSource extends _QsoSource {
-  final RigEntry rig;
-  _RigSource(this.rig);
-  @override String get id => rig.id;
-  @override String get label => rig.label;
 }
 
 class _HotspotSource extends _QsoSource {
@@ -126,7 +119,6 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
   int _frequencyHz = 0;
   String _mode = '';
   String _band = '';
-  Timer? _pollTimer;
 
   static const List<String> _allBands = [
     '160m', '80m', '60m', '40m', '30m', '20m', '17m', '15m', '12m', '10m',
@@ -432,7 +424,6 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
   void dispose() {
     widget.controller?._detach();
     _clockTimer?.cancel();
-    _pollTimer?.cancel();
     _hotspotPollTimer?.cancel();
     _hotspotApiClient?.dispose();
     _deviceFoundSub?.cancel();
@@ -482,22 +473,10 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
   void _onConnectionChanged() {
     setState(() {});
     _ensureSourceValid();
-    final source = _selectedSource;
-    if (source is _RigSource) {
-      if (source.rig.connected) {
-        _startPolling();
-      } else {
-        _pollTimer?.cancel();
-        _pollTimer = null;
-      }
-    }
   }
 
   List<_QsoSource> _buildSources() {
     final sources = <_QsoSource>[];
-    for (final rig in _cs.rigManager.rigs) {
-      sources.add(_RigSource(rig));
-    }
     if (_cs.mdnsAvailable) {
       for (final device in _cs.discovery.devices.values) {
         if (device.type == 'hotspot' && device.provisioned) {
@@ -521,8 +500,6 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
   }
 
   void _selectSource(_QsoSource? source) {
-    _pollTimer?.cancel();
-    _pollTimer = null;
     _hotspotPollTimer?.cancel();
     _hotspotPollTimer = null;
     _hotspotApiClient?.dispose();
@@ -538,9 +515,7 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
 
     if (source == null) return;
 
-    if (source is _RigSource && source.rig.connected) {
-      _startPolling();
-    } else if (source is _HotspotSource) {
+    if (source is _HotspotSource) {
       _hotspotApiClient = OpenRigApiClient(
         host: source.device.host,
         port: source.device.port,
@@ -561,30 +536,6 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
         setState(() { _frequencyHz = hz; _band = _freqToBand(hz / 1e6); });
       }
     } catch (_) {}
-  }
-
-  void _startPolling() {
-    _pollTimer?.cancel();
-    _poll();
-    _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) => _poll());
-  }
-
-  bool _polling = false;
-  Future<void> _poll() async {
-    if (_polling) return;
-    _polling = true;
-    try {
-      final source = _selectedSource;
-      if (source is! _RigSource) return;
-      final client = source.rig.client;
-      if (!client.isConnected) return;
-      final freq = await client.getFrequency();
-      final modeResult = await client.getMode();
-      if (mounted) setState(() { _frequencyHz = freq; _band = _freqToBand(freq / 1e6); _mode = modeResult.mode; });
-    } catch (_) {
-    } finally {
-      _polling = false;
-    }
   }
 
   void _startHotspotPolling() {
@@ -638,12 +589,6 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
   void _loadSpot(DxSpot spot) {
     final hz = (spot.frequencyKhz * 1000).round();
     final mode = _modeFromSpot(spot);
-    final client = _cs.client;
-    if (client != null && client.isConnected) {
-      client.setFrequency(hz);
-      if (mode != null) client.setMode(mode);
-    }
-
     _hasPotaLocation = spot.parkRef != null;
     setState(() {
       _callCtl.text = spot.dxCall;
@@ -1207,11 +1152,9 @@ class _QsoEntryPanelState extends State<QsoEntryPanel> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
-                                s is _RigSource ? Icons.radio : Icons.router,
+                                Icons.router,
                                 size: 11,
-                                color: s is _RigSource
-                                    ? (s.rig.connected ? Colors.green.shade400 : Colors.grey)
-                                    : Colors.blue.shade300,
+                                color: Colors.blue.shade300,
                               ),
                               const SizedBox(width: 4),
                               Text(s.label, style: const TextStyle(fontSize: 11)),

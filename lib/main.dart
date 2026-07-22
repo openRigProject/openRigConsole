@@ -1,23 +1,19 @@
 import 'dart:io' show exit;
-import 'dart:ui' show AppExitResponse;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:openrig_core/openrig_core.dart';
 
-import 'panels/rig_panel.dart';
 import 'panels/qso_entry_panel.dart';
 import 'panels/map_panel.dart';
 import 'panels/solar_image_panel.dart';
 import 'panels/stats_panel.dart';
-import 'screens/bandmap_screen.dart';
 import 'screens/spots_screen.dart' show SpotsScreen, DxClusterController;
 import 'screens/devices_screen.dart';
 import 'screens/log_screen.dart';
 import 'services/connection_service.dart';
 import 'services/settings_service.dart';
 import 'widgets/preferences_dialog.dart';
-import 'widgets/rig_log_dialog.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -63,7 +59,6 @@ class _AppShellState extends State<AppShell>
   final _qsoController = QsoEntryController();
   final _clusterController = DxClusterController();
   final _mapLocation = ValueNotifier<MapLocation?>(null);
-  List<DxSpot> _spots = [];
   late double _topZoneHeight;
   static const double _topZoneMin = 160;
   static const double _topZoneMax = 600;
@@ -76,8 +71,6 @@ class _AppShellState extends State<AppShell>
   static const double _statsMin = 100;
   static const double _statsMax = 320;
 
-  late AppLifecycleListener _lifecycleListener;
-
   SettingsService get _settings => widget.settings;
 
   @override
@@ -89,23 +82,11 @@ class _AppShellState extends State<AppShell>
     _connectionService = ConnectionService(settings: _settings);
     _connectionService.addListener(_onConnectionChanged);
     _connectionService.startDiscovery();
-    _connectionService.autoConnect();
-    _tabController = TabController(length: 4, vsync: this);
-    _lifecycleListener = AppLifecycleListener(
-      onExitRequested: _onExitRequested,
-    );
-  }
-
-  Future<AppExitResponse> _onExitRequested() async {
-    // Kill all local rigctld sidecars before the app process exits,
-    // otherwise they become orphaned and keep running.
-    await _connectionService.disconnect();
-    return AppExitResponse.exit;
+    _tabController = TabController(length: 3, vsync: this);
   }
 
   @override
   void dispose() {
-    _lifecycleListener.dispose();
     _tabController.dispose();
     _mapLocation.dispose();
     _connectionService.removeListener(_onConnectionChanged);
@@ -141,10 +122,6 @@ class _AppShellState extends State<AppShell>
     );
   }
 
-  void _showRigLogs() {
-    RigLogDialog.show(context, _connectionService);
-  }
-
   void _showPreferences() {
     showDialog<bool>(
       context: context,
@@ -152,10 +129,6 @@ class _AppShellState extends State<AppShell>
     ).then((saved) {
       if (saved == true && mounted) setState(() {});
     });
-  }
-
-  void _onSpotsChanged(List<DxSpot> spots) {
-    setState(() => _spots = spots);
   }
 
   void _onQsoLogged() {
@@ -194,15 +167,6 @@ class _AppShellState extends State<AppShell>
             ]),
           ],
         ),
-        PlatformMenu(
-          label: 'View',
-          menus: [
-            PlatformMenuItem(
-              label: 'Rig Logs...',
-              onSelected: _showRigLogs,
-            ),
-          ],
-        ),
       ],
       child: Scaffold(
       body: Column(
@@ -233,23 +197,13 @@ class _AppShellState extends State<AppShell>
             ),
           ),
 
-          // Top zone: Rig Panel | QSO Entry | Stats
+          // Top zone: QSO Entry | Map | Stats
           SizedBox(
             height: effectiveTopZone,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Rig Panel — left
-                SizedBox(
-                  width: 220,
-                  child: RigPanel(
-                    connectionService: _connectionService,
-                    settings: _settings,
-                  ),
-                ),
-                const VerticalDivider(thickness: 1, width: 1),
-
-                // QSO Entry — center (flexible)
+                // QSO Entry — left (flexible)
                 Expanded(
                   child: QsoEntryPanel(
                     connectionService: _connectionService,
@@ -265,7 +219,6 @@ class _AppShellState extends State<AppShell>
                 ),
 
                 // Draggable divider before Map
-                // Drag right → QSO grows, map shrinks (left boundary moves right)
                 _dragDivider(onDelta: (dx) {
                   setState(() {
                     _mapWidth = (_mapWidth - dx).clamp(_mapMin, _mapMax);
@@ -285,7 +238,6 @@ class _AppShellState extends State<AppShell>
                 ),
 
                 // Draggable divider before Stats
-                // Drag right → map grows, stats shrinks (right boundary moves right)
                 _dragDivider(onDelta: (dx) {
                   setState(() {
                     _mapWidth = (_mapWidth + dx).clamp(_mapMin, _mapMax);
@@ -344,7 +296,6 @@ class _AppShellState extends State<AppShell>
               tabs: const [
                 Tab(text: 'Log'),
                 Tab(text: 'Spots'),
-                Tab(text: 'Bandmap'),
                 Tab(text: 'Devices'),
               ],
             ),
@@ -357,19 +308,13 @@ class _AppShellState extends State<AppShell>
               children: [
                 LogScreen(logPath: _settings.logPath, settings: _settings),
                 SpotsScreen(
-                  connectionService: _connectionService,
                   settings: _settings,
-                  onSpotsChanged: _onSpotsChanged,
                   onSpotSelected: _onSpotSelected,
                   controller: _clusterController,
                   onLocationOverride: (lat, lon, label) {
                     _mapLocation.value =
                         MapLocation(lat: lat, lon: lon, callsign: label);
                   },
-                ),
-                BandmapScreen(
-                  connectionService: _connectionService,
-                  spots: _spots,
                 ),
                 DevicesScreen(
                   connectionService: _connectionService,
