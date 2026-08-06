@@ -1728,6 +1728,14 @@ class _DeviceDetailPanelState extends State<_DeviceDetailPanel> {
                   label: 'ysfgateway',
                   onRestart: () => _restartService('ysf'),
                 ),
+                _ServiceButton(
+                  label: 'ysfparrot',
+                  onRestart: () => _restartService('ysfparrot'),
+                ),
+                _ServiceButton(
+                  label: 'ysf2dmr',
+                  onRestart: () => _restartService('ysf2dmr'),
+                ),
               ],
             ],
           ),
