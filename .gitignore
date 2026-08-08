@@ -15,3 +15,4 @@ assets/rigctld/windows/*
 !assets/rigctld/macos/.gitkeep
 !assets/rigctld/windows/.gitkeep
 devtools_options.yaml
+.DS_Store
